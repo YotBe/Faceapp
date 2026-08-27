@@ -4,11 +4,16 @@ import type { ReactNode } from "react";
 
 import { buttonClass, secondaryButtonClass } from "@/components/Chrome";
 import { getSession } from "@/lib/auth";
+import { configProblems, storageProblems } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home(): Promise<ReactNode> {
-  if (await getSession()) redirect("/dashboard");
+  // Deliberately before the session check: reading a session needs APP_SECRET,
+  // and an unconfigured deployment should explain itself rather than throw.
+  const problems = [...configProblems(), ...storageProblems()];
+
+  if (problems.length === 0 && (await getSession())) redirect("/dashboard");
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-8 px-6 py-16">
@@ -23,14 +28,42 @@ export default async function Home(): Promise<ReactNode> {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <Link href="/signup" className={buttonClass}>
-          Create an operator account
-        </Link>
-        <Link href="/login" className={secondaryButtonClass}>
-          Sign in
-        </Link>
-      </div>
+      {problems.length > 0 ? (
+        <div className="rounded-xl border border-[var(--color-warn-line)] bg-[var(--color-warn-bg)] p-5 text-sm text-[var(--color-warn-ink)]">
+          <p className="font-semibold">This deployment is not finished being set up</p>
+          <p className="mt-2 leading-relaxed">
+            The application is here, but {problems.length}{" "}
+            {problems.length === 1 ? "thing is" : "things are"} still missing.
+            Until they are supplied there is nothing to sign in to.
+          </p>
+          <ul className="mt-4 space-y-3">
+            {problems.map((problem) => (
+              <li key={problem.variable}>
+                <code className="font-mono text-xs font-semibold">
+                  {problem.variable}
+                </code>
+                <span className="opacity-90"> — {problem.what}</span>
+                <span className="mt-0.5 block text-xs opacity-80">{problem.how}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-xs leading-relaxed opacity-80">
+            This product needs a database, an always-on Python service for the
+            face model, a background worker, and durable object storage. A
+            serverless host runs the web app; it does not run the other three.
+            See the README.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-3">
+          <Link href="/signup" className={buttonClass}>
+            Create an operator account
+          </Link>
+          <Link href="/login" className={secondaryButtonClass}>
+            Sign in
+          </Link>
+        </div>
+      )}
 
       <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-5 text-sm leading-relaxed text-[var(--color-muted)]">
         <p className="font-medium text-[var(--color-ink)]">

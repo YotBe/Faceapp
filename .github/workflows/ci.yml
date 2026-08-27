@@ -118,12 +118,13 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
-      # The production build also proves the threshold gate holds: with
-      # NODE_ENV=production the development placeholder is refused outright, so
-      # a build that succeeds cannot be one that quietly shipped a made-up
-      # matching threshold.
-      - name: Build
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/unused
-          APP_SECRET: build-time-placeholder-not-used-at-runtime
+      # Built with NO environment at all, on purpose.
+      #
+      # Next.js evaluates every route module during the build to collect its
+      # configuration, so a module that validates config at import time fails
+      # the build on any host that supplies variables at runtime rather than
+      # build time. Vercel is one. Injecting placeholder variables here would
+      # hide exactly the failure this step exists to catch — which is how it got
+      # shipped the first time.
+      - name: Build with no configuration
         run: pnpm build
