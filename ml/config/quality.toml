@@ -1,0 +1,61 @@
+# Quality gate.
+#
+# Assigns every detected face a tier:
+#
+#   0  rejected — never embedded, never stored
+#   1  weak     — searched only in the secondary "maybe" pass
+#   2  good     — eligible for the confident result set
+#
+# Tier-0 rejection is what stops a small background face in a crowd shot from
+# generating a false match against somebody's selfie. It is also data
+# minimisation implemented as a code path: a face too small to match reliably is
+# never turned into a biometric template at all.
+#
+# Boundaries follow the spec literally — rejection is `<`, promotion is `>` —
+# so a face at exactly 70px or with a detection score of exactly 0.70 lands in
+# tier 1. That is the safe direction: borderline faces go into the bucket a
+# person has to look at, not the one that gets delivered automatically.
+
+[quality]
+
+# --- Tier 0: reject -------------------------------------------------------
+
+# Below this the face is too small for ArcFace to distinguish reliably from
+# other people of similar appearance. Festival and wedding albums are full of
+# 25–35px faces; indexing them buys a little recall and costs a lot of precision.
+min_face_px = 40
+
+# Detector confidence. Below this it may not be a face at all.
+min_det_score = 0.5
+
+# --- Tier 2: promote ------------------------------------------------------
+
+good_face_px = 70
+good_det_score = 0.7
+
+# A face turned further than this from the camera has too little of itself
+# visible to match a frontal selfie well. It is still indexed as tier 1, because
+# a profile shot of someone is still a photograph of them and belongs in the
+# "maybe" bucket.
+max_yaw_deg = 40.0
+
+# Variance of the Laplacian over the face crop, resampled to 112x112. Higher is
+# sharper. Blur only demotes tier 2 to tier 1 — it never rejects — so an
+# incorrect value here costs recall in the confident set rather than admitting
+# false positives.
+#
+# PROVISIONAL. The absolute scale depends on the camera, the lighting and the
+# JPEG quality of a given photographer's album. Set it from the blur-sliced
+# metrics in an evaluation report on a real album; until then this is an
+# educated guess and should be treated as one. Set to a blank value to disable
+# the blur criterion entirely.
+min_blur_score = 45.0
+
+# --- Fallback pose estimation ---------------------------------------------
+
+# Only used when the engine cannot supply a real head pose. buffalo_l includes a
+# 3D landmark model and does supply one, so this affects test engines and any
+# future engine without pose output. It converts the offset of the nose between
+# the eyes into degrees; it is a rough linear calibration, not a measurement,
+# and it is only ever asked to separate "roughly frontal" from "strong profile".
+yaw_from_landmarks_scale_deg = 90.0

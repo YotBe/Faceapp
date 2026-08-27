@@ -65,10 +65,18 @@ pinning a greenfield project to an older major.
 
 **Why InsightFace and not Rekognition:** Rekognition bills per image indexed and
 per search, which caps the margin permanently at festival scale. `buffalo_l` runs
-on CPU at roughly 150–400ms per photo, costs nothing per operation, and keeps
-biometric data inside our own infrastructure — a much easier compliance story.
-`FaceEngine` (`ml/faceapp_ml/engine/base.py`) exists so this stays swappable; no
-vendor's data model may leak into the schema.
+on CPU, costs nothing per operation, and keeps biometric data inside our own
+infrastructure — a much easier compliance story. `FaceEngine`
+(`ml/faceapp_ml/engine/base.py`) exists so this stays swappable; no vendor's data
+model may leak into the schema.
+
+**Measured cost, one shared vCPU:** detection 129ms per photograph, then 37ms
+pose + 105ms embedding per face that *survives the quality gate*. So roughly
+`130ms + 145ms x surviving faces`: about 400ms for a two-face shot, 1.3s for a
+crowded six-face one. The spec's cost model assumes 250ms per photograph, which
+holds for portraits and is optimistic for festival crowds — size ingestion
+accordingly. It also means the tier-0 gate is the biggest performance lever as
+well as the compliance one, since rejecting a face before embedding saves 145ms.
 
 ## 4. Layout
 
@@ -133,8 +141,8 @@ to run in `strict` mode. To set them:
 
 ```bash
 cd ml
-python -m eval.run --dataset ../eval/datasets/<name> --kind real
-python -m eval.select_thresholds --report eval/reports/<report>.json
+python -m eval.run --dataset eval/datasets/<name>
+python -m eval.select_thresholds --report eval/reports/<report>.json --write
 ```
 
 `select_thresholds` picks `T_high` = the lowest threshold with precision ≥ 0.99,

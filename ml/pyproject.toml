@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faceapp-ml"
+version = "0.1.0"
+description = "Face detection, embedding, quality gating and threshold evaluation for event photo search"
+requires-python = ">=3.11"
+
+# Kept deliberately thin. The core — quality gating, embedding arithmetic,
+# threshold loading, the whole eval harness — runs on numpy alone, so the tests
+# are fast and CI does not have to download 300MB of model weights to check that
+# the tier table is right.
+dependencies = [
+    "numpy>=1.26",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+# The real detector and embedder. Pulls onnxruntime and, on first use,
+# downloads the buffalo_l model pack.
+insightface = [
+    "insightface>=0.7.3",
+    "onnxruntime>=1.17",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["faceapp_ml*", "eval*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "slow: spawns a subprocess or runs the full CLI",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+# The prose in this codebase uses en and em dashes deliberately. RUF002 flags
+# them as confusable with a hyphen, which is true and not a problem in a
+# docstring.
+ignore = ["RUF002", "RUF003"]

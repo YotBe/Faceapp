@@ -1,0 +1,47 @@
+# Face matching thresholds.
+#
+# ============================================================================
+# STATUS: UNTUNED. No labeled dataset has been evaluated yet.
+# ============================================================================
+#
+# `load_thresholds()` raises UntunedThresholdError while this file looks like
+# this, and it is meant to. The search path cannot run until somebody has
+# measured these numbers, which is the point.
+#
+# Cosine similarity on ArcFace embeddings generally operates somewhere around
+# 0.35–0.55. Quoting that range is as far as anyone can honestly go without
+# data: the right value depends on the detector, the embedding model, and the
+# photographic conditions of the specific albums being searched. Picking the
+# middle of the range and shipping it is the single most common way this
+# category of product fails, and the failure is quiet — the system runs, returns
+# plausible results, and occasionally hands somebody a stranger's photographs.
+#
+# To set them:
+#
+#   1. Assemble a labeled set. 300–1,000 photographs from a real event with
+#      mixed conditions, and for 20 known people, which photographs each appears
+#      in, plus one clean frontal selfie each. See ml/eval/README.md.
+#
+#   2. Run the sweep:
+#        cd ml
+#        python -m eval.run --dataset eval/datasets/<name>
+#
+#   3. Select and write:
+#        python -m eval.select_thresholds --report eval/reports/<report>.json --write
+#
+#      t_high is taken at the lowest threshold where measured precision reaches
+#      0.99. t_low is taken where recall reaches about 0.95, for the secondary
+#      "maybe" bucket.
+#
+# Step 3 rewrites this file, including the SHA-256 of the report that justified
+# the numbers. Editing a threshold by hand afterwards fails the digest check on
+# load, so a hand-edited value cannot quietly reach production.
+
+status = "untuned"
+
+[thresholds]
+# t_high =
+# t_low =
+
+[provenance]
+# Filled in by eval.select_thresholds.

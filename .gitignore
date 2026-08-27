@@ -61,18 +61,20 @@ venv/
 # ---------------------------------------------------------------------------
 # BIOMETRIC / PERSONAL DATA — never commit any of this.
 #
-# eval/datasets holds real event photographs and the selfies of real, named
-# people. Under GDPR Art. 9 those are special-category personal data. A git
-# repository is permanent, replicated and un-deletable in practice, which is
-# the exact opposite of the retention guarantees in docs/COMPLIANCE.md.
-# Committing here would be a personal data breach on its own.
+# ml/eval/datasets holds real event photographs and the selfies of real, named
+# people; ml/eval/cache holds the face templates computed from them. Under GDPR
+# Art. 9 those are special-category personal data. A git repository is
+# permanent, replicated and in practice un-deletable, which is the exact
+# opposite of every retention guarantee in docs/COMPLIANCE.md. Committing here
+# would be a personal data breach on its own.
 #
-# The only things that may be committed are aggregate metrics: the report
-# JSON/Markdown in eval/reports, which contain counts and scores, never
-# embeddings, crops, filenames or person identifiers.
+# Reports are the exception and are meant to be committed: they hold counts and
+# aggregate scores, never an embedding, a crop or a filename. A test asserts
+# that (tests/test_eval_end_to_end.py::test_report_contains_no_embeddings), and
+# config/thresholds.toml records the SHA-256 of the report that justified it, so
+# the evidence has to travel with the code.
 # ---------------------------------------------------------------------------
-/eval/datasets/
-/eval/cache/
+/ml/eval/datasets/
+/ml/eval/cache/
 *.npz
 *.npy
-!/eval/reports/**

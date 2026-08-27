@@ -83,7 +83,7 @@ So the number is measured, not chosen:
 
 ```bash
 cd ml
-python -m eval.run --dataset ../eval/datasets/<name> --kind real
+python -m eval.run --dataset eval/datasets/<name>
 python -m eval.select_thresholds --report eval/reports/<report>.json --write
 ```
 
