@@ -1,0 +1,78 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# ---------------------------------------------------------------------------
+# Python ML worker
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+/ml/.venv/
+
+# InsightFace model weights (~300MB, downloaded on first run)
+/ml/models/
+~/.insightface/
+
+# ---------------------------------------------------------------------------
+# BIOMETRIC / PERSONAL DATA — never commit any of this.
+#
+# eval/datasets holds real event photographs and the selfies of real, named
+# people. Under GDPR Art. 9 those are special-category personal data. A git
+# repository is permanent, replicated and un-deletable in practice, which is
+# the exact opposite of the retention guarantees in docs/COMPLIANCE.md.
+# Committing here would be a personal data breach on its own.
+#
+# The only things that may be committed are aggregate metrics: the report
+# JSON/Markdown in eval/reports, which contain counts and scores, never
+# embeddings, crops, filenames or person identifiers.
+# ---------------------------------------------------------------------------
+/eval/datasets/
+/eval/cache/
+*.npz
+*.npy
+!/eval/reports/**
