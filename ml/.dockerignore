@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+Dockerfile
+.dockerignore
+
+# Never into an image: real photographs and face templates.
+eval/datasets/
+eval/cache/
+*.npz
+*.npy
+models/

@@ -62,6 +62,33 @@ export const env = {
     return optional("STORAGE_ROOT", ".storage");
   },
 
+  // --- Cloudflare R2 ------------------------------------------------------
+  //
+  // All four or none. A half-configured R2 falls back to the local driver, and
+  // on a serverless host that means uploads appear to succeed and the
+  // photographs are gone by the next request — a failure with no error message
+  // anywhere. `r2Configured` is what makes that impossible.
+  get r2Configured(): boolean {
+    return Boolean(
+      process.env["R2_ENDPOINT"] &&
+        process.env["R2_BUCKET"] &&
+        process.env["R2_ACCESS_KEY_ID"] &&
+        process.env["R2_SECRET_ACCESS_KEY"],
+    );
+  },
+  get r2Endpoint(): string {
+    return required("R2_ENDPOINT");
+  },
+  get r2Bucket(): string {
+    return required("R2_BUCKET");
+  },
+  get r2AccessKeyId(): string {
+    return required("R2_ACCESS_KEY_ID");
+  },
+  get r2SecretAccessKey(): string {
+    return required("R2_SECRET_ACCESS_KEY");
+  },
+
   get mlServiceUrl(): string {
     return optional("ML_SERVICE_URL", "http://127.0.0.1:8000");
   },
@@ -138,18 +165,29 @@ export function configProblems(): ConfigProblem[] {
  * succeed and the file is gone by the next request.
  */
 export function storageProblems(): ConfigProblem[] {
-  const onServerless = Boolean(process.env["VERCEL"] ?? process.env["AWS_LAMBDA_FUNCTION_NAME"]);
+  if (env.r2Configured) return [];
+
+  const onServerless = Boolean(
+    process.env["VERCEL"] ?? process.env["AWS_LAMBDA_FUNCTION_NAME"],
+  );
   if (!onServerless) return [];
+
+  const partial = [
+    "R2_ENDPOINT",
+    "R2_BUCKET",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+  ].filter((name) => !process.env[name]);
 
   return [
     {
-      variable: "storage driver",
+      variable: partial.join(", "),
       what: "uploaded photographs have nowhere durable to live",
       how:
-        "The bundled driver writes to the local filesystem, which on a " +
-        "serverless host is read-only or discarded between requests. " +
-        "Implement StorageDriver in src/lib/storage.ts against R2 or Supabase " +
-        "Storage before uploading anything you care about.",
+        "Without these the local storage driver is used, and on a serverless " +
+        "host its filesystem is read-only or discarded between requests — the " +
+        "upload appears to succeed and the photograph is gone. See " +
+        "docs/DEPLOYMENT.md.",
     },
   ];
 }

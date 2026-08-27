@@ -13,6 +13,9 @@ import { bucketOf, type Thresholds } from "./thresholds";
 
 export interface MatchedPhoto {
   photoId: string;
+  /** Storage keys. Turned into expiring URLs by `signUrls`, never returned raw. */
+  previewKey: string | null;
+  thumbKey: string | null;
   previewUrl: string | null;
   thumbUrl: string | null;
   width: number | null;
@@ -133,7 +136,34 @@ export async function searchEvent(
     [vector, eventId, EXCLUSION_RADIUS, CANDIDATE_LIMIT],
   );
 
-  return rank(rows, thresholds);
+  return signUrls(rank(rows, thresholds));
+}
+
+/**
+ * Replace storage keys with expiring URLs.
+ *
+ * Separate from `rank` because ranking is pure arithmetic and signing is I/O —
+ * presigning an R2 object is asynchronous, and mixing the two would make the
+ * ranking logic untestable without a storage back end.
+ */
+export async function signUrls(outcome: SearchOutcome): Promise<SearchOutcome> {
+  const driver = storage();
+
+  const sign = async (photo: MatchedPhoto) => {
+    photo.previewUrl = photo.previewKey
+      ? await driver.signedUrl(BUCKET, photo.previewKey)
+      : null;
+    photo.thumbUrl = photo.thumbKey
+      ? await driver.signedUrl(BUCKET, photo.thumbKey)
+      : null;
+    // The keys are an internal detail; handing them to a browser would leak the
+    // storage layout and outlive the signature.
+    photo.previewKey = null;
+    photo.thumbKey = null;
+  };
+
+  await Promise.all([...outcome.confident, ...outcome.maybe].map(sign));
+  return outcome;
 }
 
 export function rank(rows: FaceRow[], thresholds: Thresholds): SearchOutcome {
@@ -167,10 +197,10 @@ export function rank(rows: FaceRow[], thresholds: Thresholds): SearchOutcome {
     const photo: MatchedPhoto = {
       photoId: row.photo_id,
       rankScore: score + prominenceBoost(row),
-      previewUrl: row.preview_key
-        ? storage.signedUrl(BUCKET, row.preview_key)
-        : null,
-      thumbUrl: row.thumb_key ? storage.signedUrl(BUCKET, row.thumb_key) : null,
+      previewKey: row.preview_key,
+      thumbKey: row.thumb_key,
+      previewUrl: null,
+      thumbUrl: null,
       width: row.width,
       height: row.height,
       takenAt: row.taken_at,

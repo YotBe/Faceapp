@@ -32,7 +32,7 @@ from faceapp_ml.quality import QualityPolicy
 from .images import load_rgb, make_watermarked_preview, taken_at
 from .repo import Job, Repo, format_vector
 from .settings import Settings
-from .storage import LocalStorage
+from .storage import Storage, from_env
 
 log = logging.getLogger("faceapp.ingest")
 
@@ -64,17 +64,19 @@ def process_one(
     job: Job,
     *,
     repo: Repo,
-    storage: LocalStorage,
+    storage: Storage,
     engine: FaceEngine,
     policy: QualityPolicy,
     settings: Settings,
 ) -> tuple[int, int]:
     """Returns (faces indexed, detections rejected)."""
-    raw_path = storage.path(job.storage_key)
-    if not raw_path.exists():
+    if not storage.exists(job.storage_key):
         raise FileNotFoundError(f"{job.storage_key} is not in storage")
 
-    image = load_rgb(raw_path)
+    # Through the driver rather than off the filesystem: with R2 there is no
+    # path, and EXIF has to be read from the same bytes we decode.
+    raw = storage.read(job.storage_key)
+    image = load_rgb(raw)
     preview_key, thumb_key = derivative_keys(job.storage_key)
 
     mark = job.event_name.upper()[:24] or "PREVIEW"
@@ -83,13 +85,16 @@ def process_one(
         make_watermarked_preview(
             image, settings.preview_px, mark, quality=settings.preview_quality
         ),
+        content_type="image/webp",
     )
     # The thumbnail is watermarked too. It is what the attendee results grid
     # shows, and a 400px unmarked copy of every photograph in the album is a
     # perfectly good scrape — the watermark has to be on whatever is reachable
     # before the photographs are released, not only on the large preview.
     storage.write(
-        thumb_key, make_watermarked_preview(image, settings.thumb_px, mark, quality=80)
+        thumb_key,
+        make_watermarked_preview(image, settings.thumb_px, mark, quality=80),
+        content_type="image/webp",
     )
 
     repo.store_photo_derivatives(
@@ -98,7 +103,7 @@ def process_one(
         height=image.height,
         preview_key=preview_key,
         thumb_key=thumb_key,
-        taken_at=taken_at(raw_path),
+        taken_at=taken_at(raw),
     )
 
     rgb = np.asarray(image, dtype=np.uint8)
@@ -139,14 +144,17 @@ def run(settings: Settings | None = None) -> int:
 
     worker_id = f"{socket.gethostname()}-{os.getpid()}"
     repo = Repo(settings.database_url)
-    storage = LocalStorage(settings.storage_root, settings.bucket)
+    storage = from_env(settings.storage_root, settings.bucket)
     policy = QualityPolicy.load()
 
     log.info("loading face engine")
     from faceapp_ml.engine import InsightFaceEngine
 
     engine: FaceEngine = InsightFaceEngine()
-    log.info("worker %s ready, engine=%s", worker_id, engine.name)
+    log.info(
+        "worker %s ready, engine=%s, storage=%s",
+        worker_id, engine.name, type(storage).__name__,
+    )
 
     signal.signal(signal.SIGINT, _handle_stop)
     signal.signal(signal.SIGTERM, _handle_stop)

@@ -99,10 +99,15 @@ docs/DPA-template.md    Controller/processor agreement for operators
 
 **Two seams that exist so this is not tied to any vendor.** `src/lib/auth.ts` is
 replaced wholesale by `@supabase/ssr` on a Supabase deployment;
-`src/lib/storage.ts` is an interface whose local-filesystem driver is swapped for
-R2 or Supabase Storage. Nothing else in the app knows the difference, and both
+`src/lib/storage.ts` carries two drivers, local filesystem and Cloudflare R2,
+chosen by configuration. Nothing else in the app knows the difference, and both
 exist so the whole thing runs locally — an app you cannot run without a cloud
 account is an app whose tests are all mocks.
+
+R2 is all-four-variables-or-none, on both sides. A partially configured bucket
+that falls back to a local filesystem is the failure with no error message
+anywhere: on a serverless host the upload succeeds and the photograph is gone by
+the next request. `docs/DEPLOYMENT.md` is the deployment guide.
 
 ## 5. Data model
 

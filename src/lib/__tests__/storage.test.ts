@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 process.env["DATABASE_URL"] ??= "postgres://localhost/unused";
 process.env["APP_SECRET"] ??= "test-secret-not-used-anywhere-real";
 
-const { assertSafeKey, assertSafeBucket, signKey, verifySignature } =
+const { assertSafeKey, assertSafeBucket, signKey, verifySignature, storage, LocalStorage } =
   await import("../storage");
 
 /**
@@ -70,4 +70,22 @@ test("ordinary keys and buckets are accepted", () => {
   expect(() => assertSafeKey("2f3a-11ee/originals/deadbeef.jpg")).not.toThrow();
   expect(() => assertSafeBucket("event-photos")).not.toThrow();
   expect(() => assertSafeBucket("Event Photos")).toThrow(/unsafe bucket/);
+});
+
+
+// ---------------------------------------------------------------------------
+// Driver selection
+// ---------------------------------------------------------------------------
+
+test("without R2 configured, the local driver is used", () => {
+  expect(storage().kind).toBe("local");
+  expect(storage()).toBeInstanceOf(LocalStorage);
+});
+
+test("the local driver keeps every key inside its bucket", async () => {
+  const local = new LocalStorage("/tmp/faceapp-test-root");
+  expect(local.path("event-photos", "a/b.webp")).toBe(
+    "/tmp/faceapp-test-root/event-photos/a/b.webp",
+  );
+  expect(() => local.path("event-photos", "../../escape")).toThrow();
 });

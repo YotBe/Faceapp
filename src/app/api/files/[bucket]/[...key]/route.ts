@@ -4,7 +4,7 @@ import { Readable } from "node:stream";
 
 import { NextResponse } from "next/server";
 
-import { BUCKET, storage, verifySignature } from "@/lib/storage";
+import { BUCKET, localPath, storage, verifySignature } from "@/lib/storage";
 
 /**
  * Serves a stored object, but only to someone holding a valid, unexpired
@@ -31,6 +31,14 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ bucket: string; key: string[] }> },
 ) {
+  // Only the local driver serves bytes through the app. With R2 the browser
+  // has a presigned URL straight to the bucket, and this route is dead weight —
+  // refusing here keeps it from becoming an accidental proxy that puts every
+  // photograph back through our egress.
+  if (storage().kind !== "local") {
+    return new NextResponse("not found", { status: 404 });
+  }
+
   const { bucket, key: segments } = await context.params;
   const key = segments.join("/");
 
@@ -46,7 +54,7 @@ export async function GET(
 
   let path: string;
   try {
-    path = storage.path(bucket, key);
+    path = localPath(bucket, key);
     await stat(path);
   } catch {
     return new NextResponse("not found", { status: 404 });

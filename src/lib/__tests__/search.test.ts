@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 process.env["DATABASE_URL"] ??= "postgres://localhost/unused";
 process.env["APP_SECRET"] ??= "test-secret-not-used-anywhere-real";
 
-const { rank } = await import("../search");
+const { rank, signUrls } = await import("../search");
 const { bucketOf } = await import("../thresholds");
 
 const T = { tHigh: 0.5, tLow: 0.4, trusted: true, source: "test" };
@@ -115,12 +115,26 @@ test("prominence cannot promote a photo across the threshold", () => {
   expect(out.maybe.length).toBe(1);
 });
 
-test("results carry signed, expiring URLs rather than raw keys", () => {
+test("ranking is pure: it produces keys, not URLs", () => {
+  // Signing is I/O — presigning an R2 object is asynchronous — so it is a
+  // separate step. This keeps the ranking logic testable with no storage.
   const out = rank([face({ photo_id: "p1", similarity: 0.8 })], T);
-  const url = out.confident[0]!.thumbUrl!;
+  expect(out.confident[0]!.thumbKey).toBe("p1.thumb.webp");
+  expect(out.confident[0]!.thumbUrl).toBeNull();
+});
+
+test("signing produces expiring URLs and drops the keys", async () => {
+  const signed = await signUrls(rank([face({ photo_id: "p1", similarity: 0.8 })], T));
+  const url = signed.confident[0]!.thumbUrl!;
+
   expect(url).toMatch(/^\/api\/files\/event-photos\//);
   expect(url).toMatch(/[?&]exp=\d+/);
   expect(url).toMatch(/[?&]sig=/);
+
+  // The raw key never reaches the browser: it would leak the storage layout
+  // and, unlike the URL, it does not expire.
+  expect(signed.confident[0]!.thumbKey).toBeNull();
+  expect(signed.confident[0]!.previewKey).toBeNull();
 });
 
 test("bucket boundaries are inclusive at the threshold", () => {

@@ -72,12 +72,14 @@ export async function POST(request: Request) {
   // level 0: JPEG and WebP are already compressed, so deflate spends CPU to
   // save nothing. Store-only keeps a 300-photo zip cheap to produce.
   const archive = new ZipArchive({ zlib: { level: 0 }, store: true });
+  const driver = storage();
+
   for (const row of rows) {
     // The watermarked preview, not the original. Releasing originals is the
     // operator's decision to make, not a side effect of finding yourself.
     const key = row.preview_key ?? row.storage_key;
     const name = `${row.id.slice(0, 8)}.${key.split(".").pop() ?? "webp"}`;
-    archive.append(storage.readStream(BUCKET, key), { name });
+    archive.append(await driver.getStream(BUCKET, key), { name });
   }
   void archive.finalize();
 

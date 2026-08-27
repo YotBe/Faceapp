@@ -21,7 +21,7 @@ from faceapp_worker.images import (
     make_watermarked_preview,
     taken_at,
 )
-from faceapp_worker.storage import LocalStorage, UnsafeKeyError
+from faceapp_worker.storage import LocalStorage, UnsafeKeyError, from_env
 
 
 def photo(width: int = 900, height: int = 600, seed: int = 0) -> Image.Image:
@@ -106,6 +106,20 @@ def test_capture_time_is_read_from_exif(tmp_path: Path) -> None:
     assert taken_at(path) == datetime(2026, 7, 4, 21, 15, 30, tzinfo=UTC)
 
 
+def test_exif_and_decoding_work_from_bytes(tmp_path: Path) -> None:
+    """With object storage there is no path — the worker holds the object in
+    memory and must not need a temporary file to read it."""
+    path = tmp_path / "shot.jpg"
+    image = photo(120, 90)
+    exif = image.getexif()
+    exif[36867] = "2026:07:04 21:15:30"
+    image.save(path, exif=exif)
+
+    raw = path.read_bytes()
+    assert taken_at(raw) == datetime(2026, 7, 4, 21, 15, 30, tzinfo=UTC)
+    assert load_rgb(raw).size == (120, 90)
+
+
 def test_a_photo_without_exif_is_not_an_error(tmp_path: Path) -> None:
     path = tmp_path / "plain.png"
     photo(100, 100).save(path)
@@ -151,3 +165,23 @@ def test_round_trip(tmp_path: Path) -> None:
     assert storage.read("a/b.txt") == b"hello"
     assert storage.delete("a/b.txt") is True
     assert storage.delete("a/b.txt") is False
+
+
+def test_local_storage_is_chosen_when_r2_is_absent(tmp_path: Path, monkeypatch) -> None:
+    for name in ("R2_ENDPOINT", "R2_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    assert isinstance(from_env(tmp_path), LocalStorage)
+
+
+def test_a_half_configured_r2_refuses_rather_than_falling_back(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The failure this prevents has no error message anywhere: the upload
+    succeeds against a local filesystem that the next request cannot see."""
+    monkeypatch.setenv("R2_ENDPOINT", "https://example.r2.cloudflarestorage.com")
+    monkeypatch.setenv("R2_BUCKET", "album")
+    monkeypatch.delenv("R2_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("R2_SECRET_ACCESS_KEY", raising=False)
+
+    with pytest.raises(SystemExit, match="partially configured"):
+        from_env(tmp_path)

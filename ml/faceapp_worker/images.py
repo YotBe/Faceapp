@@ -18,23 +18,30 @@ EXIF_DATETIME_ORIGINAL = 36867
 EXIF_DATETIME = 306
 
 
-def load_rgb(path: Path) -> Image.Image:
+def load_rgb(source: Path | bytes) -> Image.Image:
     """Open and orient.
+
+    Takes bytes as well as a path, because with object storage there is no path
+    — the worker has the object in memory and must not need a temporary file.
 
     `exif_transpose` matters more than it looks: a phone photograph carries its
     rotation in EXIF rather than in the pixels, and a face detector handed a
-    sideways image finds nothing at all. Skipping this would look like a
-    detection problem and be an image-loading one.
+    sideways image finds nothing at all. Skipping it would look like a detection
+    problem and be an image-loading one.
     """
-    with Image.open(path) as im:
+    with Image.open(_as_stream(source)) as im:
         im = ImageOps.exif_transpose(im)
         return im.convert("RGB")
 
 
-def taken_at(path: Path) -> datetime | None:
+def _as_stream(source: Path | bytes) -> Path | io.BytesIO:
+    return io.BytesIO(source) if isinstance(source, bytes) else source
+
+
+def taken_at(source: Path | bytes) -> datetime | None:
     """Capture time from EXIF, which is what makes time-window filtering work."""
     try:
-        with Image.open(path) as im:
+        with Image.open(_as_stream(source)) as im:
             exif = im.getexif()
     except Exception:
         return None

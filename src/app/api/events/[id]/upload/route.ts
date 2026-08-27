@@ -80,7 +80,7 @@ export async function POST(
     // and the unique constraint does the deduplication for us.
     const key = `${eventId}/originals/${hash}.${safeExtension}`;
 
-    await storage.put(BUCKET, key, bytes);
+    await storage().put(BUCKET, key, bytes, file.type);
 
     const inserted = await serviceTransaction(async (db) => {
       const { rows } = await db.query<{ id: string }>(

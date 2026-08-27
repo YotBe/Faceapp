@@ -124,21 +124,33 @@ impersonation hole the design closes. See [`e2e/README.md`](e2e/README.md).
 
 ## Deploying
 
-Nothing here is tied to running locally:
+Full guide: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
-- **Database.** Any Postgres with pgvector. `supabase db push` applies the same
-  migrations to a Supabase project.
-- **Auth.** `src/lib/auth.ts` is the seam. Swap it for `@supabase/ssr` and
-  `operator_credentials` goes unused; nothing else changes.
-- **Storage.** `src/lib/storage.ts` is an interface with a local-filesystem
-  driver. R2 or Supabase Storage implement the same three methods and the same
-  short-lived signed URLs.
-- **ML.** The worker and enrollment service are ordinary Python processes; the
-  spec's Fly.io or Railway container is a Dockerfile away.
+**This is four services, not one.** A serverless host runs the web app; it
+cannot run the other three, and pretending otherwise produces a deployment that
+looks live and loses every photograph uploaded to it.
 
-Still missing before a paid event: measured thresholds, the storage GC worker
-that drains `storage_gc_queue`, WhatsApp delivery, a load test, and the legal
-pages. See the Phase 5 row above and §10 of `docs/COMPLIANCE.md`.
+| Component | Where |
+|---|---|
+| Web app | Vercel, or any Node host |
+| Postgres + pgvector | Supabase, Neon, RDS |
+| Enrollment service | `ml/Dockerfile`, role `service` — Fly.io, Railway, Render |
+| Ingestion worker | Same image, role `worker` |
+| Object storage | Cloudflare R2 (driver included) |
+
+The web app degrades honestly: with anything missing, the home page names what
+is absent rather than returning a 500.
+
+Two seams keep this from being tied to any vendor. `src/lib/auth.ts` is replaced
+wholesale by `@supabase/ssr` on a Supabase deployment. `src/lib/storage.ts` is an
+interface with two drivers — local filesystem for development, R2 for
+deployment — chosen by configuration, all-or-nothing so a half-configured bucket
+cannot silently fall back to a filesystem that does not persist.
+
+Still missing before a paid event: **measured thresholds** (search refuses to run
+without them, and should), the storage GC worker that drains `storage_gc_queue`,
+WhatsApp delivery, a load test, and the legal pages. See §6 of the deployment
+guide and §10 of `docs/COMPLIANCE.md`.
 
 ## Reading order
 
