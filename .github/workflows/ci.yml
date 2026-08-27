@@ -68,7 +68,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check faceapp_ml eval tests
+        run: ruff check faceapp_ml faceapp_worker eval tests
 
       - name: Tests
         run: pytest -q
@@ -116,3 +116,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm test
+
+      # The production build also proves the threshold gate holds: with
+      # NODE_ENV=production the development placeholder is refused outright, so
+      # a build that succeeds cannot be one that quietly shipped a made-up
+      # matching threshold.
+      - name: Build
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/unused
+          APP_SECRET: build-time-placeholder-not-used-at-runtime
+        run: pnpm build

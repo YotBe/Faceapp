@@ -1,26 +1,53 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * Two audiences, one stylesheet.
+ *
+ * The operator uses this on a laptop, at leisure. The attendee uses it once, on
+ * a phone, at an event, probably on 4G and possibly in sunlight — which is why
+ * the attendee side is high-contrast and large-target rather than subtle.
+ */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@theme {
+  --color-ink: #101418;
+  --color-muted: #5b6672;
+  --color-line: #e3e7ec;
+  --color-surface: #ffffff;
+  --color-canvas: #f6f7f9;
+  --color-accent: #1f5fd6;
+  --color-warn-bg: #fff8e6;
+  --color-warn-line: #e5c76b;
+  --color-warn-ink: #6b4e00;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  @theme {
+    --color-ink: #e9edf2;
+    --color-muted: #97a3b0;
+    --color-line: #262d35;
+    --color-surface: #151a20;
+    --color-canvas: #0d1116;
+    --color-accent: #6ea0ff;
+    --color-warn-bg: #2b2410;
+    --color-warn-line: #6b5a1f;
+    --color-warn-ink: #f0d68a;
   }
 }
 
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The camera preview is mirrored: an unmirrored self-view is disorienting
+   because it does not move the way a mirror does. */
+.mirror {
+  transform: scaleX(-1);
 }

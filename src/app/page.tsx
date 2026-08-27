@@ -1,44 +1,49 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-/**
- * Placeholder.
- *
- * There is no product UI yet, and that is deliberate: the build order puts the
- * schema, the retention machinery and the evaluation harness ahead of anything
- * anyone can look at. The attendee capture flow lands in Phase 3, once there is
- * a measured threshold for it to use.
- */
-export default function Home(): ReactNode {
+import { buttonClass, secondaryButtonClass } from "@/components/Chrome";
+import { getSession } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+
+export default async function Home(): Promise<ReactNode> {
+  if (await getSession()) redirect("/dashboard");
+
   return (
-    <main className="mx-auto flex max-w-2xl flex-1 flex-col justify-center gap-6 px-6 py-24">
-      <h1 className="text-2xl font-semibold tracking-tight">
-        Event photo face search
-      </h1>
-      <p className="text-balance leading-relaxed text-neutral-600 dark:text-neutral-400">
-        Foundations only. The database schema, retention enforcement and the
-        evaluation harness are in place; the attendee capture flow is not built
-        yet.
-      </p>
-      <ul className="space-y-2 text-sm text-neutral-600 dark:text-neutral-400">
-        <li>
-          <code className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
-            supabase/tests/run.sh
-          </code>{" "}
-          — schema, row-level security and retention acceptance tests
-        </li>
-        <li>
-          <code className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
-            ml/
-          </code>{" "}
-          — face detection, embedding and the threshold evaluation harness
-        </li>
-        <li>
-          <code className="rounded bg-neutral-100 px-1.5 py-0.5 dark:bg-neutral-800">
-            docs/COMPLIANCE.md
-          </code>{" "}
-          — data flow, retention matrix and deletion jobs
-        </li>
-      </ul>
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-8 px-6 py-16">
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight text-balance">
+          Attendees find the photos they are in. Nothing else.
+        </h1>
+        <p className="mt-3 leading-relaxed text-[var(--color-muted)]">
+          Upload the album, share one link. Guests take a selfie and get their
+          photographs back — no app, no signup, no account. Everything deletes
+          itself on a date you set.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <Link href="/signup" className={buttonClass}>
+          Create an operator account
+        </Link>
+        <Link href="/login" className={secondaryButtonClass}>
+          Sign in
+        </Link>
+      </div>
+
+      <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-5 text-sm leading-relaxed text-[var(--color-muted)]">
+        <p className="font-medium text-[var(--color-ink)]">
+          Face data is handled as biometric data, because it is.
+        </p>
+        <p className="mt-2">
+          Selfies are deleted within a minute of the search that used them and are
+          never stored. Face measurements are scoped to a single event and never
+          linked across albums or to a name. Anyone can remove themselves from an
+          album without an account. Events in Illinois, Texas and Washington are
+          refused.
+        </p>
+      </div>
     </main>
   );
 }

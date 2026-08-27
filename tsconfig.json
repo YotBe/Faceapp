@@ -9,6 +9,9 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
+    // Tests run under `node --test --experimental-strip-types`, whose ESM
+    // resolver needs the real extension in the specifier.
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,

@@ -81,17 +81,28 @@ well as the compliance one, since rejecting a face before embedding saves 145ms.
 ## 4. Layout
 
 ```
-src/                    Next.js app (TypeScript strict)
+src/app/                Next.js app — operator pages, attendee pages, route handlers
+src/lib/                db (RLS-aware), auth, storage, thresholds, search, ML client
 supabase/migrations/    Schema. Additive only — never edit an applied migration.
-supabase/tests/         SQL acceptance tests (RLS, retention). Run with psql.
-ml/                     Python worker. Separate dependencies, separate venv.
+supabase/tests/         SQL acceptance tests (RLS, retention, queue). Run with psql.
+ml/                     Python. Separate dependencies, separate venv.
   faceapp_ml/engine/    FaceEngine interface + implementations
   faceapp_ml/quality.py Quality gating (§6 below)
-  eval/                 Threshold sweep harness — build and run this before any UI
+  faceapp_worker/       Ingestion worker, enrollment service, clustering
+  eval/                 Threshold sweep harness — run before trusting any result
   config/thresholds.toml  Written by eval only
+e2e/                    Browser smoke test, camera included
+scripts/                dev-db, dev-all, seed-demo, make-fake-camera
 docs/COMPLIANCE.md      Data-flow, retention matrix, deletion jobs
 docs/DPA-template.md    Controller/processor agreement for operators
 ```
+
+**Two seams that exist so this is not tied to any vendor.** `src/lib/auth.ts` is
+replaced wholesale by `@supabase/ssr` on a Supabase deployment;
+`src/lib/storage.ts` is an interface whose local-filesystem driver is swapped for
+R2 or Supabase Storage. Nothing else in the app knows the difference, and both
+exist so the whole thing runs locally — an app you cannot run without a cloud
+account is an app whose tests are all mocks.
 
 ## 5. Data model
 
@@ -136,8 +147,17 @@ and the operator needs to be warned about expected recall up front.
 STATUS: UNTUNED — no labeled dataset has been evaluated yet.
 ```
 
-`ml/config/thresholds.toml` ships with no numeric values and the loader refuses
-to run in `strict` mode. To set them:
+`ml/config/thresholds.toml` ships with no numeric values and both loaders — the
+Python one and `src/lib/thresholds.ts` — refuse to run. The search route returns
+503 with the reason.
+
+There is a development escape hatch, `FACEAPP_DEV_THRESHOLDS=1`, which runs on
+placeholder numbers so the application can be demonstrated. It is refused when
+`NODE_ENV=production`, it puts a banner on every attendee page, and the search
+response carries `thresholdsTrusted: false`. **It is not a substitute for tuning
+and must never reach a real event.**
+
+To set them properly:
 
 ```bash
 cd ml
@@ -150,7 +170,23 @@ and `T_low` = the threshold where recall ≈ 0.95, and writes both together with
 provenance of the report that justified them. When it has run, replace this
 section with the numbers and the report filename.
 
-## 8. Working agreements
+## 8. Two traps worth knowing about
+
+**`hnsw` is a reserved GUC prefix, but only after pgvector loads into the
+backend.** `SET LOCAL hnsw.iterative_scan` therefore succeeds on a fresh
+connection and fails on one that has already run a vector query — so the first
+search on a pooled connection works and every subsequent one aborts its
+transaction. `src/lib/search.ts` checks `extversion >= 0.8.0` once and caches it
+rather than setting the parameter hopefully. Symptom if this regresses:
+intermittent 500s from `/api/search` that never reproduce on the first request.
+
+**A `<video>` reports 0x0 until its first frame arrives, and a conditionally
+rendered one has a null ref when `getUserMedia` resolves.** Both produce a black
+preview and a capture that fails for reasons that have nothing to do with the
+person's face. `SelfieCapture` attaches the stream in an effect keyed on phase
+and waits for a non-zero `videoWidth` before capturing.
+
+## 9. Working agreements
 
 - Acceptance criteria are the spec. Write the test, show it failing, then implement.
 - Migrations are additive. Never edit one that has been applied.
@@ -159,3 +195,16 @@ section with the numbers and the report filename.
 - Effort budget, from the original spec, is worth re-reading when scoping:
   20% detection/embedding/search, 30% quality gates and threshold tuning,
   20% ingestion, 20% legal and abuse prevention, 10% UI.
+- The end-to-end browser test is the one that catches integration bugs. Two real
+  defects in §8 above were found by it and by nothing else — unit tests passed
+  throughout. Run it after touching search, capture or the connection pool.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

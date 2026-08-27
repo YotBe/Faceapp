@@ -174,16 +174,26 @@ marks the row `done`. Retries with `attempts` and `last_error`. Until this
 worker exists and is monitored, retention is only half-implemented — the
 database is clean and the bucket is not.
 
-> **Status: not yet built.** This lands with the ingestion worker in Phase 2. The
-> queue is populated correctly today, which is verified by
-> `supabase/tests/20_retention.sql`; nothing drains it yet.
+> **Status: still not built, and it is the largest outstanding compliance gap.**
+> The queue is populated correctly — verified by `supabase/tests/20_retention.sql`
+> — but nothing drains it, so today retention deletes the index and leaves the
+> photographs in the bucket. Until this exists, "the album is deleted after 60
+> days" is true of the database and false of storage, and must not be said to a
+> customer. It is a small piece of work: consume `storage_gc_queue` where
+> `state = 'pending'`, delete the object, mark the row done.
 
 ### `log_selfie_deletion(event_id, elapsed_ms, frames, purpose)`
 
-Called by the search handler after the selfie frames and their embedding have
-been dropped. Records elapsed time and a `within_sla` boolean against the 60s
-target. This is what turns "we delete your selfie immediately" from a marketing
-claim into something a regulator can audit.
+Called by `/api/search` after the selfie frames and their template have been
+dropped. Records elapsed time and a `within_sla` boolean against the 60s target.
+This is what turns "we delete your selfie immediately" from a marketing claim
+into something a regulator can audit.
+
+Observed on the reference implementation: **1.5–1.6 seconds** from receipt to
+destruction, well inside the target. The frames arrive in a request body, become
+one 512-d vector in the Python service, and are gone when the response returns.
+There is no selfie table to clean up because nothing is ever written to one — the
+`/enroll` endpoint touches no database and no disk.
 
 ### Verification
 
@@ -199,7 +209,7 @@ audit row survives, and that a second run is a no-op.
 
 | Right | How |
 |---|---|
-| **Object / opt out** (Art. 21) | Public per-event opt-out endpoint. The person submits a selfie, we embed it, purge every matching face vector in that album, and store the embedding in `exclusions` so every future search subtracts them. No account needed. *(Phase 4.)* |
+| **Object / opt out** (Art. 21) | Public per-event opt-out at `/e/<slug>/opt-out`. The person captures a selfie, we embed it, delete every matching face vector in that album, and store the embedding in `exclusions` so every future search subtracts them. No account, and no proof of identity — asking for identification would defeat the point, since the person asking to be out of a face database is exactly the one who should not have to hand over more identity to get out of it. **Implemented.** |
 | **Erasure** (Art. 17) | The opt-out flow, plus automatic erasure of everything at `delete_after`. |
 | **Access** (Art. 15) | Directed to the organizer as controller; we assist as processor. We can state what was held, but note that we cannot enumerate "photos of person X" without the person supplying a selfie — which is the correct property, not a gap. |
 | **Withdraw consent** (Art. 7(3)) | A search consent covers one search and expires with it. Nothing to withdraw afterward, because nothing is kept. |
@@ -267,6 +277,27 @@ Every one of these is a sub-processor and belongs in the DPA annex.
    disclosure of personal data. That assumption is why `T_high` is set at
    precision ≥ 0.99 rather than at the F1 optimum, and it is worth confirming
    before we tune anything.
+
+## 10a. Implementation status
+
+What the code does today, so this document can be checked against it rather than
+believed:
+
+| Control | State |
+|---|---|
+| Jurisdiction gate (IL/TX/WA refused) | Database trigger. Enforced, tested. |
+| Retention deletes the event and cascades | `run_retention()`. Enforced, tested. |
+| Object storage actually emptied | **Queue populated, worker not written.** §6. |
+| Selfie destroyed within 60s, audited | Implemented; measured at ~1.5s. |
+| Opt-out purges vectors and blocks future search | Implemented. |
+| Operator isolation | RLS, exercised by the app itself via `SET LOCAL request.jwt.claims`. |
+| Opt-out embeddings unreadable by operators | RLS on, no policy, no grant. |
+| Tier-0 faces never embedded | Enforced in the pipeline and by a CHECK constraint. |
+| Gender/age inference | Model deliberately not loaded. |
+| Watermarked previews and thumbnails | Implemented. |
+| Signed URLs with short expiry | Implemented, 15 minutes. |
+| Precision >= 0.99 before results are trusted | **Enforced by refusing to run.** No album has been evaluated. |
+| Youth events need an attestation | CHECK constraint plus a second check in the search route. |
 
 ## 11. Incident posture
 

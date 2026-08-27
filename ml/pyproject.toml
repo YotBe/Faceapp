@@ -24,13 +24,21 @@ insightface = [
     "insightface>=0.7.3",
     "onnxruntime>=1.17",
 ]
+# The ingestion worker and the enrollment service: Postgres, HTTP, plumbing.
+# Separate from the core so CI can test the quality gate without them.
+service = [
+    "psycopg[binary]>=3.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
 ]
 
 [tool.setuptools.packages.find]
-include = ["faceapp_ml*", "eval*"]
+include = ["faceapp_ml*", "faceapp_worker*", "eval*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
