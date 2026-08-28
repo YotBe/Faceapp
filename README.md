@@ -15,6 +15,7 @@ created.
 | 2 | Ingestion — resumable upload, job queue, derivatives, dashboard | done |
 | 3 | Attendee search — camera capture, matching, deletion, clustering | done |
 | 4 | Delivery — zip download, opt-out, share link and QR | done |
+| — | Retention closed end to end: storage GC drains the bucket | done |
 | 5 | Hardening — load test, monitoring, legal pages, backup drill | not started |
 
 **The match thresholds are not set, and search is gated on them.** They come
@@ -79,8 +80,12 @@ opt-outs are subtracted, thresholds split the results into confident and maybe,
 and the results are grouped per photograph. Then the template is destroyed and an
 audit row records how long it lived.
 
-**Retention.** An hourly job deletes expired events, queues their object keys for
-real deletion from storage, and writes proof that survives the cascade.
+**Retention.** An hourly job deletes expired events and queues every object key
+they owned; the storage GC worker then removes the bytes. Both halves are
+needed — deleting a row in Postgres does not delete a 4MB JPEG in a bucket, and
+a retention job that only touches the database leaves every photograph exactly
+where it was. Proof of deletion survives both, in a table with no foreign key to
+what it recorded.
 
 ## Thresholds
 
@@ -148,9 +153,8 @@ deployment — chosen by configuration, all-or-nothing so a half-configured buck
 cannot silently fall back to a filesystem that does not persist.
 
 Still missing before a paid event: **measured thresholds** (search refuses to run
-without them, and should), the storage GC worker that drains `storage_gc_queue`,
-WhatsApp delivery, a load test, and the legal pages. See §6 of the deployment
-guide and §10 of `docs/COMPLIANCE.md`.
+without them, and should), WhatsApp delivery, a load test, and the legal pages.
+See §6 of the deployment guide and §10 of `docs/COMPLIANCE.md`.
 
 ## Reading order
 

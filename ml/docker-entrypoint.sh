@@ -2,9 +2,10 @@
 #
 # One image, three roles.
 #
-#   service   the enrollment HTTP API
-#   worker    the ingestion queue consumer
-#   cluster   a one-shot clustering pass over ready events
+#   service     the enrollment HTTP API
+#   worker      the ingestion queue consumer
+#   storage-gc  drains storage_gc_queue — the half of retention that touches bytes
+#   cluster     a one-shot clustering pass over ready events
 set -euo pipefail
 
 role="${1:-service}"
@@ -20,6 +21,9 @@ case "$role" in
   worker)
     exec python -m faceapp_worker.ingest "$@"
     ;;
+  storage-gc)
+    exec python -m faceapp_worker.storage_gc "$@"
+    ;;
   cluster)
     exec python -m faceapp_worker.cluster "$@"
     ;;
@@ -27,7 +31,7 @@ case "$role" in
     exec /bin/bash "$@"
     ;;
   *)
-    echo "unknown role: $role (expected service, worker or cluster)" >&2
+    echo "unknown role: $role (expected service, worker, storage-gc or cluster)" >&2
     exit 64
     ;;
 esac

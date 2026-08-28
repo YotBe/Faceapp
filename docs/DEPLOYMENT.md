@@ -135,11 +135,26 @@ variable list at all.
 `select run_retention(500);` on a schedule and check it is actually running: a
 retention job that silently stopped looks exactly like one that has nothing to do.
 
-**Storage GC** — *not implemented*. `run_retention()` enqueues every object key
-into `storage_gc_queue`, and nothing drains it. Until it exists, retention
-deletes the database rows and leaves the photographs in the bucket. See
-`docs/COMPLIANCE.md` §6 — this is the largest outstanding compliance gap and it
-must be closed before telling a customer their album is deleted after 60 days.
+**Storage GC** — every 15 minutes or so, after retention:
+
+```bash
+docker run --rm -e DATABASE_URL=... -e R2_ENDPOINT=... -e R2_BUCKET=... \
+  -e R2_ACCESS_KEY_ID=... -e R2_SECRET_ACCESS_KEY=... \
+  faceapp-ml storage-gc
+```
+
+It exits when the queue drains, so it suits a scheduled job; `--forever` makes
+it a long-running service instead.
+
+**Monitor it.** The process exits non-zero while any row is dead-lettered, and
+`select * from storage_gc_backlog` reports the state. Alert on
+`oldest_pending_age` above an hour and on `dead_lettered` above zero — those are
+photographs still in the bucket after their event was erased. A queue depth
+alone will not tell you: a stalled queue and a busy one look the same.
+
+```bash
+docker run --rm -e DATABASE_URL=... faceapp-ml storage-gc --status
+```
 
 **Clustering** — after an album finishes indexing:
 `docker run faceapp-ml cluster --all-ready`. Optional below ~50k photographs.
@@ -149,7 +164,7 @@ must be closed before telling a customer their album is deleted after 60 days.
 - [ ] **Thresholds measured on a labeled album.** Search refuses to run without
       them, and it should. See `ml/eval/README.md`. Nothing else on this list
       matters until this is done.
-- [ ] Storage GC worker written and running.
+- [ ] Storage GC scheduled, and `storage_gc_backlog` wired to an alert.
 - [ ] The DPA in `docs/DPA-template.md` reviewed by a lawyer and signed by the
       organizer.
 - [ ] Region confirmed EU or Israel for EU events.

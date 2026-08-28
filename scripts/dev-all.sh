@@ -8,6 +8,8 @@
 #   postgres            the database (started by dev-db.sh)
 #   uvicorn :8000       the enrollment service — model execution lives here
 #   worker              consumes ingest_jobs
+#   storage-gc          drains storage_gc_queue, so retention empties the bucket
+#                       as well as the database
 #   next dev :3000      the web app
 #
 # Logs land in .dev/. Stop everything with ./scripts/dev-stop.sh
@@ -40,6 +42,7 @@ start() {
 start enrollment "$ROOT/ml/.venv/bin/uvicorn" faceapp_worker.service:app \
   --host 127.0.0.1 --port 8000 --app-dir "$ROOT/ml" --log-level warning
 start worker env PYTHONPATH="$ROOT/ml" "$PY" -m faceapp_worker.ingest
+start storage-gc env PYTHONPATH="$ROOT/ml" "$PY" -m faceapp_worker.storage_gc --forever
 start web pnpm next dev --port 3000
 
 wait_for() {

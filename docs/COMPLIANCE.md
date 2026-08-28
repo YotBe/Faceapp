@@ -169,18 +169,29 @@ added back.
 
 ### Storage GC worker
 
-Consumes `storage_gc_queue` where `state = 'pending'`, deletes the object,
-marks the row `done`. Retries with `attempts` and `last_error`. Until this
-worker exists and is monitored, retention is only half-implemented — the
-database is clean and the bucket is not.
+`ml/faceapp_worker/storage_gc.py`, container role `storage-gc`.
 
-> **Status: still not built, and it is the largest outstanding compliance gap.**
-> The queue is populated correctly — verified by `supabase/tests/20_retention.sql`
-> — but nothing drains it, so today retention deletes the index and leaves the
-> photographs in the bucket. Until this exists, "the album is deleted after 60
-> days" is true of the database and false of storage, and must not be said to a
-> customer. It is a small piece of work: consume `storage_gc_queue` where
-> `state = 'pending'`, delete the object, mark the row done.
+Claims from `storage_gc_queue` under `FOR UPDATE SKIP LOCKED` with a lease,
+deletes the object through the storage driver, marks the row done. Exponential
+backoff on failure, then a dead-letter state.
+
+An object that has already gone counts as success: the object store is the
+authority on whether the bytes exist, and re-running after a lease expired on a
+delete that actually succeeded is the normal case, not an error.
+
+**A dead-lettered row here is not like a dead-lettered ingest job.** That one is
+a photograph that will not be searchable; this one is personal data still
+sitting in a bucket after somebody was told it was gone. So the process exits
+non-zero while anything is dead-lettered, and the `storage_gc_backlog` view
+exposes `oldest_pending_age` — the number to alert on. A queue that is draining
+has a backlog measured in minutes; one measured in days means the worker is not
+running, and nobody discovers that from a queue depth that looks like any other
+number.
+
+Verified end to end, not only in SQL: a seeded album with 30 objects on disk,
+expired and put through `run_retention()`, leaves the database empty and all 30
+files present — then the GC worker removes every one, and the `deletion_audit`
+row survives both.
 
 ### `log_selfie_deletion(event_id, elapsed_ms, frames, purpose)`
 
@@ -287,7 +298,7 @@ believed:
 |---|---|
 | Jurisdiction gate (IL/TX/WA refused) | Database trigger. Enforced, tested. |
 | Retention deletes the event and cascades | `run_retention()`. Enforced, tested. |
-| Object storage actually emptied | **Queue populated, worker not written.** §6. |
+| Object storage actually emptied | Implemented and verified end to end. §6. |
 | Selfie destroyed within 60s, audited | Implemented; measured at ~1.5s. |
 | Opt-out purges vectors and blocks future search | Implemented. |
 | Operator isolation | RLS, exercised by the app itself via `SET LOCAL request.jwt.claims`. |

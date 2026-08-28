@@ -4,9 +4,10 @@
 #   docker run -e DATABASE_URL=... -p 8000:8000 faceapp-ml service
 #   docker run -e DATABASE_URL=... faceapp-ml worker
 #
-# One image, two roles, because they share the model and the quality gate and
-# must never disagree about either. Scale them independently: service replicas
-# for concurrent attendees, worker replicas for how fast an album is ready.
+# One image, several roles, because they share the model, the quality gate and
+# the storage driver and must never disagree about any of them. Scale them
+# independently: service replicas for concurrent attendees, worker replicas for
+# how fast an album is ready, one storage-gc on a schedule.
 #
 # This cannot be a serverless function. onnxruntime plus the buffalo_l pack is
 # several hundred MB resident and seconds to load; paying that per request is

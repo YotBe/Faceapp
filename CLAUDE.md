@@ -126,7 +126,10 @@ Full DDL lives in `supabase/migrations/`. Shape:
 - `deletion_audit` — deliberately has **no** foreign key to `events`, so the
   proof of deletion outlives the thing it deleted.
 - `storage_gc_queue` — deleting a DB row does not delete the object in R2/Supabase
-  Storage. Retention enqueues keys here and the worker does the real deletion.
+  Storage. Retention enqueues keys here; `faceapp_worker.storage_gc` does the
+  real deletion. Both halves are required for "the album is deleted" to be true.
+  `storage_gc_backlog` is the view to alert on — a dead-lettered row is a
+  photograph still in a bucket after somebody was told it was gone.
 
 RLS is on for every table. Operators reach their own events and nothing else.
 Attendee search runs through a service-role route handler with per-event rate
