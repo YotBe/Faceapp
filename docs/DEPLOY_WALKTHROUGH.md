@@ -91,6 +91,25 @@ per-event filter can return fewer matches than exist — an attendee silently
 loses photographs. The app detects this and adapts, but it is a real recall
 loss.
 
+Then check the privileges, because Supabase's defaults and this schema disagree:
+
+```bash
+psql "$DATABASE_URL" -c "select has_function_privilege('anon','run_retention(int)','execute')"
+```
+
+It must be `f`. Supabase grants `anon` and `authenticated` everything in the
+public schema by default, and a SECURITY DEFINER function is published at
+`/rest/v1/rpc/<name>` and is not filtered by RLS — so `run_retention` was
+callable by anyone holding the anon key that ships in the browser.
+`20260828060000_grants.sql` revokes it and grants back only what the RLS
+migration intended. If that answer is `t`, that migration did not run.
+
+Afterwards, the dashboard's **Advisors → Security** page should show only three
+"RLS enabled, no policy" notices (`exclusions`, `operator_credentials`,
+`storage_gc_queue` — deliberate: RLS on with no policy denies everyone, which is
+the point) and one about `vector` living in the public schema, which is left
+alone on purpose.
+
 ## 2. Supabase — photo storage
 
 ### Create the bucket

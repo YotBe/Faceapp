@@ -45,6 +45,22 @@ a real recall loss, not a warning to ignore.
 
 Set a region in the EU or Israel for EU events. It cannot be changed later.
 
+**Supabase's default privileges are wider than this schema wants.** A managed
+project ships `alter default privileges ... grant all` in the public schema to
+`anon` and `authenticated`, so every table these migrations create arrives with
+INSERT, UPDATE, DELETE and TRUNCATE granted to the role a browser runs as. RLS
+holds the line on the tables — enabled everywhere, so SELECT without a policy
+reads nothing — but it does not apply to a SECURITY DEFINER function, and
+Supabase publishes every function in the schema at `/rest/v1/rpc/<name>`.
+`run_retention`, `log_selfie_deletion` and both queue pairs were therefore one
+POST away for anyone holding the public anon key.
+
+`20260828060000_grants.sql` revokes all of it and grants back exactly the set
+`20260827090300_rls.sql` intended. `revoke ... from public` in the earlier
+migrations does not do this: PUBLIC and a named role are different grantees.
+Run the dashboard's security advisor after applying migrations, and check
+`has_function_privilege('anon', 'run_retention(int)', 'execute')` is false.
+
 ## 2. Object storage
 
 Anything that speaks S3. Supabase Storage and Cloudflare R2 are both first-class;
