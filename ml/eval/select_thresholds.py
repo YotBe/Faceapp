@@ -71,6 +71,21 @@ def main(argv: list[str] | None = None) -> int:
     report_path = args.report.resolve()
     data = json.loads(report_path.read_text(encoding="utf-8"))
 
+    labelling = data.get("labelling")
+    if isinstance(labelling, dict) and not labelling.get("human_added", 0):
+        raise SystemExit(
+            f"refusing: every label behind {report_path.name} was proposed by the "
+            f"model this report evaluates, and none was corrected by a person.\n"
+            "\n"
+            "A recall figure measured against a model's own output cannot see the "
+            "faces that model missed, so it comes out high whatever the model is "
+            "worth. A threshold chosen from it would carry a number that looks "
+            "earned and is not.\n"
+            "\n"
+            "Go through the misses screen for each person, re-run eval.run, and try "
+            "again."
+        )
+
     if data.get("dataset_kind") != "real":
         raise SystemExit(
             f"refusing: {report_path.name} was produced from a "

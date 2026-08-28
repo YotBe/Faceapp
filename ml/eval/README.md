@@ -38,17 +38,64 @@ permission. Delete it when you are finished — you are holding other people's
 biometric data on a laptop, and the same rules in `docs/COMPLIANCE.md` apply to
 you.
 
-**2. Pick about twenty people** who appear repeatedly across the album, and get
-one clean frontal selfie for each. Three frames each if you can, because that is
-what the product does and evaluating a one-frame enrollment measures a system
-you do not ship.
+**2. Group and label it, with help.**
 
-**3. Label.** For each of those twenty people, go through the album and record
-every photograph they appear in. Include the ones where they are small,
-half-turned, or at the back — *especially* those. If you only label the easy
-appearances your recall number will be a fiction.
+```bash
+cd ml
+python -m eval.label init ~/albums/wedding --out eval/datasets/wedding-2026-05
+python -m eval.label review --dataset eval/datasets/wedding-2026-05
+python -m eval.label export --dataset eval/datasets/wedding-2026-05
+```
 
-**4. Lay it out:**
+`init` detects every face, applies the real quality gate, embeds what survives
+and groups the results. `review` opens a page on 127.0.0.1 with three screens —
+name the groups, find the misses, pick three enrolment frames each — and saves
+as you go. `export` writes the CSVs below.
+
+The photographs are not copied. `photos.csv` points back at your album where it
+already sits, so there is one copy of other people's faces on your laptop rather
+than two. Delete the album, the dataset directory and `eval/cache/` when you are
+done; `docs/COMPLIANCE.md` applies to the copy on your machine too.
+
+### Why the "find the misses" screen is not optional
+
+The grouping comes from the same model the evaluation is about to measure. Left
+at that, the exercise is circular: labels derived from detections cannot contain
+the faces the detector missed or the quality gate rejected, so recall comes out
+high no matter what the model is worth. **A threshold measured that way is worse
+than no threshold, because it carries a number that looks earned.**
+
+So the tool proposes and you decide. The misses screen shows, for each person,
+the photographs the grouping did *not* give them — closest first, where the
+near-misses concentrate, then a random sample including photographs where no
+face survived the gate at all. Those last ones are the whole point: an
+appearance the detector never saw is invisible everywhere else.
+
+Every (photo, person) pair records whether it came from the grouping or from
+you. `export` refuses if you corrected nothing, `eval.run` refuses to score such
+a dataset, and `select_thresholds` refuses the resulting report. Three refusals
+for one mistake, because it is the mistake that quietly invalidates everything
+downstream of it.
+
+### Enrolment frames
+
+Three per person, because that is what the product enrolls — evaluating a
+one-frame enrolment measures a system you do not ship.
+
+If you have real selfies, put them in `selfies/<person>/` inside the dataset
+directory before exporting and they are used as they are. Otherwise the tool
+cuts them from the album at full resolution, and **holds the source photographs
+out of the evaluation entirely**. Scoring a query against the image it was cut
+from returns a similarity of essentially 1.0 and a guaranteed hit, which would
+flatter precision and recall at exactly the thresholds being chosen. Losing
+three photographs out of six hundred costs nothing; leaving the leak in would
+invalidate the number.
+
+**3. Or do it by hand.** The format below is plain CSV and nothing requires the
+tool. A hand-written dataset carries no `[labelling]` section and none of the
+gates above apply to it, because it is wholly human already.
+
+**4. Either way, this is the layout:**
 
 ```
 ml/eval/datasets/wedding-2026-05/
@@ -66,7 +113,20 @@ ml/eval/datasets/wedding-2026-05/
 id = "wedding-2026-05"
 kind = "real"                 # "real" or "synthetic" — decides whether thresholds may be set
 description = "R & M wedding, 620 photos, mixed indoor/outdoor, two photographers"
+
+# Written by eval.label. Omit it entirely for a hand-written dataset.
+[labelling]
+tool = "eval.label"
+engine = "insightface/buffalo_l"
+eps = 0.45
+from_clusters = 812        # pairs the grouping proposed
+human_added = 96           # pairs you added that it missed  <- the one that matters
+human_removed = 14
+held_out_photos = 18       # enrolment sources, dropped from the album
 ```
+
+`human_added` is read by `eval.run` and by `select_thresholds`. Zero means the
+labels describe what the model already believed, and both refuse.
 
 `photos.csv` — `lighting` is optional and gives you a slice in the report
 

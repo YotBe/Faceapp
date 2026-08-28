@@ -1,0 +1,373 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Label an album</title>
+<!--
+  The review UI for `python -m eval.label`.
+
+  Served from 127.0.0.1 by that command so it can write state.json back as you
+  work. Nothing here talks to anything but that local process, and it is served
+  rather than opened as a file so an afternoon of labelling is not one closed tab
+  away from being lost.
+
+  Deliberately one file of vanilla JS: this is a tool for building a dataset
+  once, and a build step for it would be a second thing to maintain for no gain.
+-->
+<style>
+  :root {
+    --bg: #fbfaf8; --fg: #1b1b1a; --muted: #6b6a66; --line: #e2dfd8;
+    --card: #fff; --accent: #2f6f4e; --accent-soft: #e6f0ea;
+    --warn: #8a5a1b; --warn-soft: #f6ecdc; --drop: #94402f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a; --fg: #eceae5; --muted: #9a9892; --line: #2c2e33;
+      --card: #1d1f23; --accent: #6fbf94; --accent-soft: #1f2f27;
+      --warn: #d4a35e; --warn-soft: #302719; --drop: #d98a76;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5; background: var(--bg);
+    border-bottom: 1px solid var(--line); padding: 14px 20px;
+  }
+  h1 { font-size: 16px; margin: 0 0 8px; font-weight: 650; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .tabs button {
+    font: inherit; padding: 6px 12px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); border-radius: 999px; cursor: pointer;
+  }
+  .tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { padding: 20px; max-width: 1400px; }
+  .banner {
+    background: var(--warn-soft); color: var(--warn); border: 1px solid currentColor;
+    border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; max-width: 78ch;
+  }
+  .cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .card.dropped { opacity: .45; }
+  .faces { display: flex; flex-wrap: wrap; gap: 5px; margin: 10px 0; }
+  .faces img, .grid img { border-radius: 6px; display: block; }
+  .faces img { width: 62px; height: 62px; object-fit: cover; cursor: pointer; border: 2px solid transparent; }
+  .faces img.out { opacity: .3; border-color: var(--drop); }
+  input[type=text], select {
+    font: inherit; padding: 6px 9px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--fg); width: 100%;
+  }
+  .btn {
+    font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); border-radius: 6px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .shot { position: relative; cursor: pointer; border: 3px solid transparent; border-radius: 8px; }
+  .shot img { width: 100%; aspect-ratio: 4/3; object-fit: cover; }
+  .shot.on { border-color: var(--accent); }
+  .shot .score {
+    position: absolute; left: 4px; bottom: 4px; font-size: 11px; font-variant-numeric: tabular-nums;
+    background: rgba(0,0,0,.65); color: #fff; padding: 1px 5px; border-radius: 4px;
+  }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 26px 0 10px; }
+  .count { font-variant-numeric: tabular-nums; }
+  .pill { border-radius: 999px; padding: 2px 9px; font-size: 12px; background: var(--accent-soft); color: var(--accent); }
+</style>
+
+<header>
+  <h1 id="title">…</h1>
+  <div class="row">
+    <div class="tabs row" role="tablist">
+      <button role="tab" data-tab="groups" aria-selected="true">1 · Name the groups</button>
+      <button role="tab" data-tab="misses" aria-selected="false">2 · Find the misses</button>
+      <button role="tab" data-tab="selfies" aria-selected="false">3 · Selfies</button>
+    </div>
+    <span class="muted" id="summary"></span>
+  </div>
+</header>
+
+<main>
+  <section id="groups"></section>
+  <section id="misses" hidden></section>
+  <section id="selfies" hidden></section>
+</main>
+
+<script>
+let S = null;
+
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, props = {}, kids = []) => {
+  const n = Object.assign(document.createElement(tag), props);
+  for (const k of [].concat(kids)) n.append(k);
+  return n;
+};
+
+async function load() {
+  S = await (await fetch("/state")).json();
+  render();
+}
+
+async function post(route, body) {
+  const res = await fetch(route, { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) { alert((await res.json()).error || "failed"); return; }
+  S = await (await fetch("/state")).json();
+}
+
+// -- shared derivations -----------------------------------------------------
+
+const people = () => [...new Set(
+  S.groups.filter(g => g.person && !g.dropped).map(g => g.person)
+    .concat(Object.keys(S.people))
+)].sort();
+
+const labelsFor = (person) =>
+  Object.keys(S.labels).filter(k => k.split("|")[1] === person).map(k => k.split("|")[0]);
+
+const humanAdded = () => Object.values(S.labels).filter(v => v === "human_added").length;
+
+const photo = (id) => S.photos.find(p => p.id === id);
+
+function summary() {
+  const added = humanAdded();
+  const total = Object.keys(S.labels).length;
+  $("#summary").innerHTML =
+    `<span class="count">${S.photos.length}</span> photographs · ` +
+    `<span class="count">${people().length}</span> people · ` +
+    `<span class="count">${total}</span> appearances, ` +
+    `<span class="pill count">${added} added by you</span>`;
+}
+
+// -- 1. groups --------------------------------------------------------------
+
+function renderGroups() {
+  const root = $("#groups");
+  root.replaceChildren();
+  root.append(el("div", {
+    className: "banner",
+    innerHTML:
+      "These groups are the model's guess, and they are here only to save you typing. " +
+      "Name the ones that are clearly one person; click any face that does not belong to " +
+      "pull it out; drop the rest. Nothing becomes a label until you name it."
+  }));
+
+  const list = el("div", { className: "cards" });
+  const names = el("datalist", { id: "people" });
+  for (const p of people()) names.append(el("option", { value: p }));
+  root.append(names);
+
+  for (const g of S.groups) {
+    const card = el("div", { className: "card" + (g.dropped ? " dropped" : "") });
+    card.append(el("div", { className: "row" }, [
+      el("strong", { textContent: g.id }),
+      el("span", { className: "muted count", textContent: `${g.faces.length} faces` }),
+    ]));
+
+    const faces = el("div", { className: "faces" });
+    for (const fid of g.faces.slice(0, 24)) {
+      const f = S.faces.find(x => x.id === fid);
+      const img = el("img", {
+        src: "/" + f.thumb,
+        title: `${f.id} · tier ${f.tier} · ${f.face_px}px · det ${f.det_score}\nclick to remove from this group`,
+        loading: "lazy",
+      });
+      img.onclick = async () => { await post("/move-face", { face: fid, group: null }); render(); };
+      faces.append(img);
+    }
+    if (g.faces.length > 24) {
+      faces.append(el("span", { className: "muted", textContent: `+${g.faces.length - 24} more` }));
+    }
+    card.append(faces);
+
+    const input = el("input", {
+      type: "text", value: g.person || "", placeholder: "who is this? (a short id)",
+      });
+    input.setAttribute("list", "people");
+    input.onchange = async () => {
+      await post("/name-group", { group: g.id, person: input.value.trim() });
+      render();
+    };
+    card.append(input);
+
+    const drop = el("button", {
+      className: "btn",
+      textContent: g.dropped ? "undrop" : "drop — not a person I am labelling",
+    });
+    drop.onclick = async () => { await post("/drop-group", { group: g.id, dropped: !g.dropped }); render(); };
+    card.append(el("div", { className: "row", style: "margin-top:8px" }, [drop]));
+
+    list.append(card);
+  }
+  root.append(list);
+
+  const loose = S.faces.filter(f => !f.group);
+  if (loose.length) {
+    root.append(el("h2", { textContent: `${loose.length} faces in no group` }));
+    root.append(el("p", {
+      className: "muted",
+      textContent:
+        "Left alone on purpose. They are offered as candidates on the misses screen, " +
+        "where you decide one photograph at a time rather than in bulk.",
+    }));
+  }
+}
+
+// -- 2. misses --------------------------------------------------------------
+
+let missPerson = null;
+
+async function renderMisses() {
+  const root = $("#misses");
+  root.replaceChildren();
+  const all = people();
+
+  root.append(el("div", {
+    className: "banner",
+    innerHTML:
+      "<strong>This is the screen that makes the numbers mean something.</strong> " +
+      "Everything above came from the model, so measuring the model against it would " +
+      "measure it against its own opinions. Here are the photographs it did <em>not</em> " +
+      "give this person — the closest ones first, where the near-misses are, then a " +
+      "random sample so the check is not only adversarial. Click every one they are " +
+      "actually in, including the small, blurred and half-turned ones."
+  }));
+
+  if (!all.length) {
+    root.append(el("p", { className: "muted", textContent: "Name a group first." }));
+    return;
+  }
+  missPerson = all.includes(missPerson) ? missPerson : all[0];
+
+  const picker = el("select");
+  for (const p of all) {
+    const added = Object.entries(S.labels)
+      .filter(([k, v]) => k.split("|")[1] === p && v === "human_added").length;
+    picker.append(el("option", { value: p, textContent: `${p} — ${labelsFor(p).length} appearances, ${added} added`, selected: p === missPerson }));
+  }
+  picker.onchange = () => { missPerson = picker.value; renderMisses(); };
+  root.append(el("div", { className: "row", style: "max-width:460px" }, [picker]));
+
+  const chosen = missPerson;
+  const cands = await (await fetch("/candidates/" + encodeURIComponent(chosen))).json();
+  const near = cands.filter(c => c.why === "near");
+  const rand = cands.filter(c => c.why === "random");
+
+  const section = (title, items, note) => {
+    root.append(el("h2", { textContent: title }));
+    if (note) root.append(el("p", { className: "muted", textContent: note }));
+    const grid = el("div", { className: "grid" });
+    for (const c of items) {
+      const on = S.labels[`${c.photo}|${chosen}`] !== undefined;
+      const box = el("div", { className: "shot" + (on ? " on" : "") });
+      box.append(el("img", { src: "/" + photo(c.photo).thumb, loading: "lazy", title: photo(c.photo).name }));
+      if (c.score !== null && c.score !== undefined && !Number.isNaN(c.score)) {
+        box.append(el("span", { className: "score", textContent: c.score.toFixed(3) }));
+      } else {
+        box.append(el("span", { className: "score", textContent: "no face" }));
+      }
+      box.onclick = async () => {
+        await post(on ? "/remove-label" : "/add-label", { photo: c.photo, person: chosen });
+        renderMisses(); summary();
+      };
+      grid.append(box);
+    }
+    if (!items.length) grid.append(el("p", { className: "muted", textContent: "nothing left here." }));
+    root.append(grid);
+  };
+
+  section("Closest, unlabelled", near,
+    "Ranked by how similar the best face in each is to this person's template.");
+  section("Random sample", rand,
+    "Drawn from everything else, including photographs where no face survived the quality " +
+    "gate at all — that is where a rejected face hides a real appearance.");
+
+  const current = labelsFor(chosen);
+  root.append(el("h2", { textContent: `Currently labelled (${current.length})` }));
+  const grid = el("div", { className: "grid" });
+  for (const pid of current) {
+    const box = el("div", { className: "shot on" });
+    box.append(el("img", { src: "/" + photo(pid).thumb, loading: "lazy", title: photo(pid).name }));
+    box.append(el("span", { className: "score", textContent: S.labels[`${pid}|${chosen}`] === "human_added" ? "you" : "grouped" }));
+    box.onclick = async () => { await post("/remove-label", { photo: pid, person: chosen }); renderMisses(); summary(); };
+    grid.append(box);
+  }
+  root.append(grid);
+}
+
+// -- 3. selfies -------------------------------------------------------------
+
+function renderSelfies() {
+  const root = $("#selfies");
+  root.replaceChildren();
+  root.append(el("div", {
+    className: "banner",
+    innerHTML:
+      "Pick <strong>three</strong> clear faces per person. They become that person's " +
+      "enrolment, exactly as three camera frames do in the product — evaluating a " +
+      "one-frame enrolment would measure a system we do not ship. " +
+      "The photographs you take them from are held out of the evaluation entirely, so a " +
+      "query is never scored against the image it came from. " +
+      "If you have real selfies, put them in <code>selfies/&lt;person&gt;/</code> inside " +
+      "the dataset folder before exporting and they will be used instead, with nothing held out."
+  }));
+
+  for (const person of people()) {
+    const card = el("div", { className: "card", style: "margin-bottom:16px" });
+    const picked = new Set((S.people[person] || {}).selfies || []);
+    card.append(el("div", { className: "row" }, [
+      el("strong", { textContent: person }),
+      el("span", { className: "muted", textContent: `${picked.size} of 3 chosen` }),
+    ]));
+
+    const mine = S.faces
+      .filter(f => f.group && (S.groups.find(g => g.id === f.group) || {}).person === person)
+      .sort((a, b) => b.face_px - a.face_px)
+      .slice(0, 40);
+
+    const faces = el("div", { className: "faces" });
+    for (const f of mine) {
+      const img = el("img", {
+        src: "/" + f.thumb, loading: "lazy",
+        title: `${f.face_px}px · det ${f.det_score} · tier ${f.tier}`,
+        style: picked.has(f.id) ? "border-color:var(--accent)" : "",
+      });
+      img.onclick = async () => {
+        const next = new Set(picked);
+        next.has(f.id) ? next.delete(f.id) : next.add(f.id);
+        await post("/set-selfies", { person, selfies: [...next] });
+        render();
+      };
+      faces.append(img);
+    }
+    card.append(faces);
+    if (!mine.length) {
+      card.append(el("p", { className: "muted", textContent: "no faces in a group for this person yet." }));
+    }
+    root.append(card);
+  }
+}
+
+// -- shell ------------------------------------------------------------------
+
+function render() {
+  $("#title").textContent = `${S.dataset_id} — ${S.album}`;
+  summary();
+  renderGroups();
+  renderSelfies();
+  if (!$("#misses").hidden) renderMisses();
+}
+
+for (const tab of document.querySelectorAll("[role=tab]")) {
+  tab.onclick = () => {
+    for (const t of document.querySelectorAll("[role=tab]")) {
+      const on = t === tab;
+      t.setAttribute("aria-selected", String(on));
+      $("#" + t.dataset.tab).hidden = !on;
+    }
+    if (tab.dataset.tab === "misses") renderMisses();
+  };
+}
+
+load();
+</script>

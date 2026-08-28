@@ -169,9 +169,19 @@ To set them properly:
 
 ```bash
 cd ml
+python -m eval.label init ~/albums/<album> --out eval/datasets/<name>
+python -m eval.label review --dataset eval/datasets/<name>     # name, correct, enrol
+python -m eval.label export --dataset eval/datasets/<name>
 python -m eval.run --dataset eval/datasets/<name>
 python -m eval.select_thresholds --report eval/reports/<report>.json --write
 ```
+
+`eval.label` groups faces with the same model the evaluation is about to
+measure, which makes labelling an album minutes rather than an afternoon and
+would be circular if left there — labels derived from detections cannot contain
+the faces the detector missed. So the corrections a person makes are counted
+separately, and a dataset with none of them is refused by the exporter, by
+`eval.run` and by `select_thresholds`. See `ml/eval/README.md`.
 
 `select_thresholds` picks `T_high` = the lowest threshold with precision ≥ 0.99,
 and `T_low` = the threshold where recall ≈ 0.95, and writes both together with the

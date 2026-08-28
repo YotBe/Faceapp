@@ -11,15 +11,14 @@ becomes a 100ms one.
 It also hands the operator something for free: "there are 2,000 distinct people
 in this album."
 
-**Why DBSCAN and not k-means.** We do not know how many people are in the album,
-which is the one thing k-means requires. DBSCAN infers the count, and more
-importantly it has a concept of noise: a face that belongs to no cluster stays
-unclustered rather than being forced into the nearest one. Forcing it is exactly
-how a stranger ends up in somebody's results.
+The grouping itself is `faceapp_ml.clustering.dbscan_cosine`, which lives there
+rather than here because `eval.label` needs the same algorithm on a laptop with
+no database.
 
-`eps` is derived from the tuned `T_high`, not chosen independently. Two faces
-belong together at the same similarity at which we would tell an attendee "this
-is you" — anything looser would build clusters that the search then trusts.
+What belongs to *this* caller is the choice of `eps`: it is derived from the
+tuned `T_high`, not chosen independently. Two faces belong together at the same
+similarity at which we would tell an attendee "this is you" — anything looser
+would build clusters that the search then trusts.
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ import os
 
 import numpy as np
 
+from faceapp_ml.clustering import dbscan_cosine
 from faceapp_ml.config import UntunedThresholdError, load_thresholds
 from faceapp_ml.embeddings import l2_normalize
 
@@ -40,52 +40,6 @@ log = logging.getLogger("faceapp.cluster")
 # A cluster smaller than this is not a person, it is a coincidence. Singletons
 # stay unclustered and are still reachable through the exact-face search path.
 MIN_CLUSTER_SIZE = 2
-
-
-def dbscan_cosine(embeddings: np.ndarray, eps: float, min_samples: int) -> np.ndarray:
-    """DBSCAN on cosine distance. Returns a label per row, -1 for noise.
-
-    Implemented here rather than pulling in scikit-learn: the worker image
-    already carries onnxruntime and a model pack, and this is fifty lines of
-    numpy against another 100MB of dependency. The distance matrix is O(n^2),
-    which is fine for one event's tier-2 faces and is the reason this runs
-    per-event rather than across the whole database.
-    """
-    n = embeddings.shape[0]
-    if n == 0:
-        return np.zeros(0, dtype=np.int32)
-
-    # Both sides are normalized, so the dot product is the cosine similarity.
-    similarity = embeddings @ embeddings.T
-    neighbours = similarity >= (1.0 - eps)
-
-    labels = np.full(n, -1, dtype=np.int32)
-    visited = np.zeros(n, dtype=bool)
-    cluster = 0
-
-    for start in range(n):
-        if visited[start]:
-            continue
-        visited[start] = True
-
-        seeds = list(np.flatnonzero(neighbours[start]))
-        if len(seeds) < min_samples:
-            continue  # noise, for now — a later cluster may still absorb it
-
-        labels[start] = cluster
-        queue = [s for s in seeds if s != start]
-        while queue:
-            point = queue.pop()
-            if not visited[point]:
-                visited[point] = True
-                point_neighbours = list(np.flatnonzero(neighbours[point]))
-                if len(point_neighbours) >= min_samples:
-                    queue.extend(p for p in point_neighbours if labels[p] == -1)
-            if labels[point] == -1:
-                labels[point] = cluster
-        cluster += 1
-
-    return labels
 
 
 def cluster_event(repo: Repo, event_id: str, eps: float) -> tuple[int, int]:

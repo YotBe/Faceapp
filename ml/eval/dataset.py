@@ -16,6 +16,10 @@ across five hundred photographs that is a couple of hours of work, once.
 
 `dataset.toml` carries `kind`, which is either "real" or "synthetic". Thresholds
 can only be written from a real one — see faceapp_ml.config.
+
+It may also carry a `[labelling]` section, written by `eval.label` when the CSVs
+were produced with cluster-assisted review rather than typed by hand. That
+section is not bookkeeping either: see `LabellingProvenance`.
 """
 
 from __future__ import annotations
@@ -29,6 +33,47 @@ from pathlib import Path
 
 class DatasetError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class LabellingProvenance:
+    """How the labels were arrived at, when a tool helped.
+
+    `eval.label` proposes labels by grouping faces with the same model the
+    evaluation is about to measure. Left alone, that is circular: recall computed
+    against labels the model produced cannot see the faces the model missed, so
+    it comes out high and means nothing.
+
+    `human_added` is the count of (photo, person) pairs a person asserted that
+    the grouping did not propose — the corrections, which are the only part of
+    the label set carrying information the model did not already have. When it is
+    zero, the human confirmed the model's opinion of itself, and `eval.run`
+    refuses the dataset.
+
+    Absent entirely means the CSVs were written by hand, as `eval/README.md`
+    describes. Those are wholly human and need no such check.
+    """
+
+    tool: str
+    engine: str = ""
+    eps: float = 0.0
+    from_clusters: int = 0
+    human_added: int = 0
+    human_removed: int = 0
+    held_out_photos: int = 0
+
+    @property
+    def has_human_corrections(self) -> bool:
+        return self.human_added > 0
+
+    def summary(self) -> str:
+        total = self.from_clusters + self.human_added
+        share = (self.human_added / total * 100) if total else 0.0
+        return (
+            f"{total} appearances via {self.tool}: {self.from_clusters} proposed by "
+            f"grouping, {self.human_added} added by hand ({share:.1f}%), "
+            f"{self.human_removed} removed"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +99,8 @@ class LabeledDataset:
     # person_id -> set of photo_ids they appear in
     truth: dict[str, set[str]] = field(default_factory=dict)
     description: str = ""
+    # None when the CSVs were written by hand rather than by eval.label.
+    labelling: LabellingProvenance | None = None
 
     @property
     def is_real(self) -> bool:
@@ -151,6 +198,19 @@ def load_dataset(root: Path | str) -> LabeledDataset:
             "an empty truth set, which silently inflates the false-positive count."
         )
 
+    labelling = None
+    section = manifest.get("labelling")
+    if isinstance(section, dict):
+        known = set(LabellingProvenance.__slots__)
+        unknown = set(section) - known
+        if unknown:
+            raise DatasetError(
+                f"{manifest_path}: unknown keys in [labelling]: {sorted(unknown)}"
+            )
+        if "tool" not in section:
+            raise DatasetError(f"{manifest_path}: [labelling] needs a tool")
+        labelling = LabellingProvenance(**section)
+
     return LabeledDataset(
         dataset_id=dataset_id,
         kind=kind,
@@ -159,4 +219,5 @@ def load_dataset(root: Path | str) -> LabeledDataset:
         people=people,
         truth=dict(truth),
         description=str(manifest.get("description", "")),
+        labelling=labelling,
     )

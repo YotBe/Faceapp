@@ -58,6 +58,10 @@ class EvalReport:
     # together or the sweep table looks inexplicably bad.
     confident_unreachable_rate: float
     enrollment_failures: dict[str, str]
+    # How the labels were arrived at, when a tool helped. Carried into the JSON
+    # so select_thresholds can refuse a report whose ground truth was never
+    # corrected by a person — the report is the only thing it gets to see.
+    labelling: dict[str, Any] | None = None
     slices: Slices | None = None
     notes: list[str] = None  # type: ignore[assignment]
 
@@ -99,6 +103,7 @@ class EvalReport:
             "unreachable_rate": round(self.unreachable_rate, 6),
             "confident_unreachable_rate": round(self.confident_unreachable_rate, 6),
             "enrollment_failures": self.enrollment_failures,
+            "labelling": self.labelling,
             "confident_sweep": [r.as_dict() for r in self.confident_sweep],
             "all_tier_sweep": [r.as_dict() for r in self.all_tier_sweep],
             "slices": self.slices.as_dict() if self.slices else None,

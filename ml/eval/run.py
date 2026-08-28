@@ -59,6 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-index even if a cached index exists for this dataset+engine+policy",
     )
     p.add_argument("--out", type=Path, default=None, help="report directory")
+    p.add_argument(
+        "--allow-uncorrected",
+        action="store_true",
+        help="run over a dataset whose labels were entirely model-proposed. For "
+        "inspecting a label set mid-review; the resulting report cannot set "
+        "thresholds.",
+    )
     return p
 
 
@@ -75,6 +82,24 @@ def main(argv: list[str] | None = None) -> int:
     else:
         dataset = load_dataset(args.dataset)
         print(f"==> {dataset.summary()}")
+        if dataset.labelling is not None:
+            print(f"==> {dataset.labelling.summary()}")
+            if not dataset.labelling.has_human_corrections and not args.allow_uncorrected:
+                raise SystemExit(
+                    "\nThis dataset's labels were all proposed by the same model that is "
+                    "about to be evaluated, and not one of them was corrected by a "
+                    "person.\n\n"
+                    "Recall computed against it would be measuring the model against its "
+                    "own opinions: every face the detector missed, and every face the "
+                    "quality gate rejected, is invisible to labels derived from "
+                    "detections. The number would come out high and mean nothing, and a "
+                    "threshold chosen from it is worse than no threshold because it looks "
+                    "earned.\n\n"
+                    "Work through the misses screen for each person:\n"
+                    f"    python -m eval.label review --dataset {args.dataset}\n\n"
+                    "--allow-uncorrected runs it anyway. The report is then marked "
+                    "untrustworthy and select_thresholds will still refuse it."
+                )
         if args.engine == "insightface":
             from faceapp_ml.engine import InsightFaceEngine
 
@@ -131,6 +156,17 @@ def main(argv: list[str] | None = None) -> int:
 
     slices = sliced_recall(confident_pairs, index, dataset, threshold=slice_threshold)
 
+    labelling_dict = None
+    if not args.synthetic and dataset.labelling is not None:
+        labelling_dict = {
+            "tool": dataset.labelling.tool,
+            "engine": dataset.labelling.engine,
+            "from_clusters": dataset.labelling.from_clusters,
+            "human_added": dataset.labelling.human_added,
+            "human_removed": dataset.labelling.human_removed,
+            "held_out_photos": dataset.labelling.held_out_photos,
+        }
+
     report = EvalReport(
         dataset_id=dataset.dataset_id,
         dataset_kind=dataset.kind,
@@ -147,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         unreachable_rate=unreachable_rate(all_pairs),
         confident_unreachable_rate=unreachable_rate(confident_pairs),
         enrollment_failures=index.enrollment_failures,
+        labelling=labelling_dict,
         slices=slices,
         notes=notes,
     )
