@@ -1,6 +1,6 @@
 """Object storage, worker side.
 
-Mirrors `src/lib/storage.ts`: a local driver for development, an R2 driver for
+Mirrors `src/lib/storage.ts`: a local driver for development, an S3 driver for
 deployment. Both sides validate keys independently rather than trusting the
 other to have done it — they are separate processes and either may be
 redeployed without the other.

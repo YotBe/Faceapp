@@ -149,7 +149,7 @@ export class LocalStorage implements StorageDriver {
 }
 
 // ---------------------------------------------------------------------------
-// R2 driver
+// S3 driver — Supabase Storage, Cloudflare R2, anything that speaks S3
 // ---------------------------------------------------------------------------
 
 export class S3Storage implements StorageDriver {
