@@ -12,17 +12,27 @@ guards ingestion is the same code that guards search.
 request body, become one 512-d vector, and both are gone when the response
 returns. That is the whole design: there is no selfie table to clean up because
 nothing was ever put in one.
+
+**Authentication is required and has no default.** Every practical container
+host gives this service a public URL, so "put it on a private network" is advice
+the platform does not always allow you to follow. Unauthenticated, this is an
+endpoint that turns face photographs into biometric templates for anyone who
+finds it. It refuses to start without ML_SERVICE_TOKEN rather than defaulting to
+open, for the same reason APP_SECRET has no fallback: a security control with a
+default is one that silently is not there.
 """
 
 from __future__ import annotations
 
+import hmac
 import io
 import logging
+import os
 import time
 from typing import Annotated
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
@@ -36,6 +46,43 @@ app = FastAPI(title="faceapp enrollment", version="1.0")
 
 _engine = None
 _policy: QualityPolicy | None = None
+
+
+def _token() -> str:
+    token = os.environ.get("ML_SERVICE_TOKEN", "")
+    if len(token) < 16:
+        raise SystemExit(
+            "ML_SERVICE_TOKEN is not set, or is shorter than 16 characters.\n"
+            "\n"
+            "This service turns face photographs into biometric templates and is\n"
+            "reachable at a public URL on every common container host. It will not\n"
+            "run without a token. Generate one with:\n"
+            "\n"
+            "    openssl rand -base64 32\n"
+            "\n"
+            "and set the same value here and on the web app."
+        )
+    return token
+
+
+def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
+    """Bearer token on every endpoint that touches a face.
+
+    `compare_digest` rather than `==`: the comparison is against a secret, and
+    the early exit of a normal string comparison leaks its prefix over enough
+    attempts.
+    """
+    expected = _token()
+    supplied = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+
+    if not hmac.compare_digest(supplied, expected):
+        raise HTTPException(
+            401,
+            "missing or incorrect bearer token — check ML_SERVICE_TOKEN matches "
+            "the value set on the web app",
+        )
 
 # A selfie frame that fills less of the frame than this is too far away to
 # enroll well. Checked server-side as well as in the browser: the client check
@@ -80,6 +127,9 @@ class HealthResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    """Unauthenticated, because a container host's health check cannot hold a
+    token — but it does no work and reveals nothing beyond which model is
+    loaded, which is public information in the repository anyway."""
     return HealthResponse(ok=True, engine=engine().name)
 
 
@@ -94,7 +144,7 @@ def _decode(data: bytes) -> np.ndarray:
         raise HTTPException(400, f"could not decode frame: {exc}") from exc
 
 
-@app.post("/enroll", response_model=Enrollment)
+@app.post("/enroll", response_model=Enrollment, dependencies=[Depends(require_token)])
 async def enroll(
     frames: Annotated[list[UploadFile], File()],
     require_frames: Annotated[int, Form()] = 3,

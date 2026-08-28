@@ -48,6 +48,7 @@ export async function enroll(frames: Blob[]): Promise<EnrollmentResult> {
   try {
     response = await fetch(`${env.mlServiceUrl}/enroll`, {
       method: "POST",
+      headers: { authorization: `Bearer ${env.mlServiceToken}` },
       body,
       // A crowded selfie still returns in a couple of seconds; anything longer
       // is a stuck service, and the attendee is standing at an event waiting.
@@ -55,6 +56,15 @@ export async function enroll(frames: Blob[]): Promise<EnrollmentResult> {
     });
   } catch (cause) {
     throw new MlServiceUnavailable(cause);
+  }
+
+  if (response.status === 401) {
+    // A configuration error, not a bad selfie. Say so plainly rather than
+    // letting it surface to an attendee as "we could not read your face".
+    throw new Error(
+      "the enrollment service rejected our token — ML_SERVICE_TOKEN differs " +
+        "between the web app and the container",
+    );
   }
 
   if (response.status === 422) {
@@ -86,10 +96,10 @@ export async function enroll(frames: Blob[]): Promise<EnrollmentResult> {
   };
 }
 
-export async function mlServiceHealthy(): Promise<boolean> {
+export async function mlServiceHealthy(timeoutMs = 2000): Promise<boolean> {
   try {
     const response = await fetch(`${env.mlServiceUrl}/health`, {
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     return response.ok;
   } catch {

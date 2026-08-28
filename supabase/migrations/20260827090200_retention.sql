@@ -207,17 +207,37 @@ revoke all on function log_selfie_deletion(uuid, int, int, text) from public;
 -- guarded rather than assumed. Hourly: an event whose retention expires is
 -- deleted within the hour, which is well inside any contractual window.
 -- ---------------------------------------------------------------------------
+-- Wrapped in its own exception handler on purpose. On a managed Postgres,
+-- `create extension pg_cron` can be refused even when the extension is listed
+-- as available — it may need superuser, a specific schema, or enabling through
+-- the provider's dashboard first. Unguarded, that refusal fails this migration
+-- and takes the entire schema with it, which is a very confusing first
+-- deployment.
+--
+-- Retention is far too important to depend on a scheduler that may not install.
+-- If this cannot self-schedule, it says so and docs/DEPLOYMENT.md covers running
+-- `select run_retention(500);` from an external scheduler instead. Verify which
+-- happened rather than assuming: a retention job that silently never runs looks
+-- exactly like one with nothing to do.
 do $$
 begin
   if exists (select 1 from pg_available_extensions where name = 'pg_cron') then
-    execute 'create extension if not exists pg_cron';
-    -- EXECUTE, not a direct call: cron.schedule does not exist until the line
-    -- above has run, and we do not want plpgsql resolving it before then.
-    execute $sched$
-      select cron.schedule('faceapp-retention', '0 * * * *', 'select run_retention(500);')
-    $sched$;
+    begin
+      execute 'create extension if not exists pg_cron';
+      -- EXECUTE, not a direct call: cron.schedule does not exist until the line
+      -- above has run, and we do not want plpgsql resolving it before then.
+      execute $sched$
+        select cron.schedule('faceapp-retention', '0 * * * *', 'select run_retention(500);')
+      $sched$;
+      raise notice 'retention scheduled hourly via pg_cron';
+    exception when others then
+      raise notice
+        'pg_cron is available but could not be set up (%). Schedule '
+        'run_retention(500) externally — see docs/DEPLOYMENT.md.', sqlerrm;
+    end;
   else
-    raise notice 'pg_cron not available; schedule run_retention(500) externally (see docs/COMPLIANCE.md)';
+    raise notice
+      'pg_cron not available; schedule run_retention(500) externally (see docs/DEPLOYMENT.md)';
   end if;
 end;
 $$;

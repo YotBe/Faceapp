@@ -21,7 +21,7 @@ from faceapp_worker.images import (
     make_watermarked_preview,
     taken_at,
 )
-from faceapp_worker.storage import LocalStorage, UnsafeKeyError, from_env
+from faceapp_worker.storage import LocalStorage, S3Storage, UnsafeKeyError, from_env
 
 
 def photo(width: int = 900, height: int = 600, seed: int = 0) -> Image.Image:
@@ -167,21 +167,57 @@ def test_round_trip(tmp_path: Path) -> None:
     assert storage.delete("a/b.txt") is False
 
 
-def test_local_storage_is_chosen_when_r2_is_absent(tmp_path: Path, monkeypatch) -> None:
-    for name in ("R2_ENDPOINT", "R2_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"):
+_ALL_S3_NAMES = (
+    "S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_REGION",
+    "R2_ENDPOINT", "R2_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_REGION",
+)
+
+
+def test_local_storage_is_chosen_when_no_bucket_is_configured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    for name in _ALL_S3_NAMES:
         monkeypatch.delenv(name, raising=False)
     assert isinstance(from_env(tmp_path), LocalStorage)
 
 
-def test_a_half_configured_r2_refuses_rather_than_falling_back(
+def test_a_half_configured_bucket_refuses_rather_than_falling_back(
     tmp_path: Path, monkeypatch
 ) -> None:
     """The failure this prevents has no error message anywhere: the upload
     succeeds against a local filesystem that the next request cannot see."""
-    monkeypatch.setenv("R2_ENDPOINT", "https://example.r2.cloudflarestorage.com")
-    monkeypatch.setenv("R2_BUCKET", "album")
-    monkeypatch.delenv("R2_ACCESS_KEY_ID", raising=False)
-    monkeypatch.delenv("R2_SECRET_ACCESS_KEY", raising=False)
+    for name in _ALL_S3_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("S3_ENDPOINT", "https://example.storage.supabase.co/storage/v1/s3")
+    monkeypatch.setenv("S3_BUCKET", "album")
 
     with pytest.raises(SystemExit, match="partially configured"):
         from_env(tmp_path)
+
+
+def test_r2_names_still_work_as_aliases(tmp_path: Path, monkeypatch) -> None:
+    """They were here first; a deployment already using them must not break."""
+    for name in _ALL_S3_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("R2_ENDPOINT", "https://example.r2.cloudflarestorage.com")
+    monkeypatch.setenv("R2_BUCKET", "album")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
+
+    assert isinstance(from_env(tmp_path), S3Storage)
+
+
+def test_supabase_needs_a_real_region_not_auto(tmp_path: Path, monkeypatch) -> None:
+    """R2 wants the literal "auto"; Supabase Storage rejects it in the
+    signature, so the region has to be configurable rather than hardcoded."""
+    for name in _ALL_S3_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("S3_ENDPOINT", "https://ref.storage.supabase.co/storage/v1/s3")
+    monkeypatch.setenv("S3_BUCKET", "album")
+    monkeypatch.setenv("S3_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setenv("S3_REGION", "eu-central-1")
+
+    storage = from_env(tmp_path)
+    assert isinstance(storage, S3Storage)
+    assert storage._client.meta.region_name == "eu-central-1"

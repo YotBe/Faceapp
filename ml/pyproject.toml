@@ -35,6 +35,14 @@ service = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
+    # fastapi and httpx are here, and not only in `service`, so CI tests the
+    # bearer token on /enroll. That token is the only thing between a public
+    # container URL and an endpoint that turns face photographs into biometric
+    # templates; it is not something to leave to an extra nobody installs.
+    # Neither pulls a model, so the "no 300MB in CI" rule still holds.
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
 ]
 
 [tool.setuptools.packages.find]

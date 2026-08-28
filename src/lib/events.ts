@@ -16,6 +16,7 @@ export interface EventSummary {
   faces_rejected: number;
   delete_after: string;
   jurisdiction_code: string;
+  is_demo: boolean;
   is_youth_event: boolean;
   youth_attestation_at: string | null;
   created_at: string;
@@ -51,7 +52,7 @@ export async function listEvents(operatorId: string): Promise<EventSummary[]> {
   return asOperator(operatorId, async (db) => {
     const { rows } = await db.query<EventSummary>(
       `select id, name, slug, status, photo_count, face_count, faces_rejected,
-              delete_after, jurisdiction_code, is_youth_event,
+              delete_after, jurisdiction_code, is_demo, is_youth_event,
               youth_attestation_at, created_at
          from events order by created_at desc`,
     );
@@ -66,7 +67,7 @@ export async function getEvent(
   return asOperator(operatorId, async (db) => {
     const { rows } = await db.query<EventSummary>(
       `select id, name, slug, status, photo_count, face_count, faces_rejected,
-              delete_after, jurisdiction_code, is_youth_event,
+              delete_after, jurisdiction_code, is_demo, is_youth_event,
               youth_attestation_at, created_at
          from events where id = $1`,
       [eventId],
@@ -82,25 +83,33 @@ export async function createEvent(
     jurisdiction: string;
     retentionDays: number;
     isYouthEvent: boolean;
+    isDemo: boolean;
+    acknowledgedBy: string;
     consentNoticeUrl?: string;
   },
 ): Promise<EventSummary> {
   const name = input.name.trim();
   if (!name) throw new Error("the event needs a name");
 
-  const days = Math.round(input.retentionDays);
+  let days = Math.round(input.retentionDays);
   if (!Number.isFinite(days) || days < 1 || days > 180) {
     throw new Error("retention must be between 1 and 180 days");
   }
+  // A demonstration is not a place to leave biometric data lying around and has
+  // no contract behind it. The database enforces this too; clamping here means
+  // the operator gets a working event rather than a constraint violation.
+  if (input.isDemo && days > 30) days = 30;
 
   return asOperator(operatorId, async (db) => {
     const { rows } = await db.query<EventSummary>(
       `insert into events
          (id, operator_id, name, slug, delete_after, jurisdiction_code,
-          is_youth_event, consent_notice_url, status)
-       values ($1, $2, $3, $4, now() + make_interval(days => $5), $6, $7, $8, 'draft')
+          is_youth_event, consent_notice_url, status,
+          is_demo, demo_acknowledged_at, demo_acknowledged_by)
+       values ($1, $2, $3, $4, now() + make_interval(days => $5), $6, $7, $8, 'draft',
+               $9, case when $9 then now() end, case when $9 then $10 end)
        returning id, name, slug, status, photo_count, face_count, faces_rejected,
-                 delete_after, jurisdiction_code, is_youth_event,
+                 delete_after, jurisdiction_code, is_demo, is_youth_event,
                  youth_attestation_at, created_at`,
       [
         randomUUID(),
@@ -111,6 +120,8 @@ export async function createEvent(
         input.jurisdiction,
         input.isYouthEvent,
         input.consentNoticeUrl?.trim() || null,
+        input.isDemo,
+        input.acknowledgedBy,
       ],
     );
     return rows[0]!;

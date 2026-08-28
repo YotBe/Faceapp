@@ -41,21 +41,6 @@ function clientIp(request: Request): string {
 export async function POST(request: Request) {
   const startedAt = Date.now();
 
-  let thresholds;
-  try {
-    thresholds = await loadThresholds();
-  } catch (error) {
-    if (error instanceof UntunedThresholdError) {
-      // 503, not 500: the service is correctly configured and deliberately
-      // refusing, and the operator needs to see why.
-      return NextResponse.json(
-        { error: "search_unavailable", detail: error.message },
-        { status: 503 },
-      );
-    }
-    throw error;
-  }
-
   const form = await request.formData().catch(() => null);
   if (!form) {
     return NextResponse.json({ error: "expected multipart form data" }, { status: 400 });
@@ -84,10 +69,11 @@ export async function POST(request: Request) {
       id: string;
       name: string;
       status: string;
+      is_demo: boolean;
       is_youth_event: boolean;
       youth_attestation_at: string | null;
     }>(
-      `select id, name, status, is_youth_event, youth_attestation_at
+      `select id, name, status, is_demo, is_youth_event, youth_attestation_at
          from events where slug = $1 and delete_after > now()`,
       [slug],
     );
@@ -111,6 +97,25 @@ export async function POST(request: Request) {
       { error: "this album is not open for search" },
       { status: 403 },
     );
+  }
+
+  // Thresholds are loaded now rather than up front, because whether untuned
+  // ones are permissible depends on this event. A demonstration may run on
+  // placeholder numbers; a real event may not, and gets a 503 explaining how to
+  // measure them.
+  let thresholds;
+  try {
+    thresholds = await loadThresholds({ allowUntuned: event.is_demo });
+  } catch (error) {
+    if (error instanceof UntunedThresholdError) {
+      // 503, not 500: the service is correctly configured and deliberately
+      // refusing, and the operator needs to see why.
+      return NextResponse.json(
+        { error: "search_unavailable", detail: error.message },
+        { status: 503 },
+      );
+    }
+    throw error;
   }
 
   // --- rate limit -------------------------------------------------------

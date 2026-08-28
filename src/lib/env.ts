@@ -27,6 +27,23 @@ function optional(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
 }
 
+/** First of several names that is set, or a MissingConfigError naming them all. */
+function firstOf(...names: string[]): string {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+  throw new MissingConfigError(names.join(" or "));
+}
+
+/** Each entry is one setting; the strings inside it are interchangeable names. */
+const S3_REQUIRED = [
+  ["S3_ENDPOINT", "R2_ENDPOINT"],
+  ["S3_BUCKET", "R2_BUCKET"],
+  ["S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID"],
+  ["S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY"],
+] as const;
+
 export class MissingConfigError extends Error {
   readonly variable: string;
 
@@ -62,35 +79,50 @@ export const env = {
     return optional("STORAGE_ROOT", ".storage");
   },
 
-  // --- Cloudflare R2 ------------------------------------------------------
+  // --- S3-compatible object storage ---------------------------------------
   //
-  // All four or none. A half-configured R2 falls back to the local driver, and
-  // on a serverless host that means uploads appear to succeed and the
-  // photographs are gone by the next request — a failure with no error message
-  // anywhere. `r2Configured` is what makes that impossible.
-  get r2Configured(): boolean {
-    return Boolean(
-      process.env["R2_ENDPOINT"] &&
-        process.env["R2_BUCKET"] &&
-        process.env["R2_ACCESS_KEY_ID"] &&
-        process.env["R2_SECRET_ACCESS_KEY"],
-    );
+  // Cloudflare R2 and Supabase Storage both speak S3, so one driver covers
+  // both. The R2_* names are accepted as aliases because they were here first.
+  //
+  // Region is configurable rather than hardcoded: R2 has no regions and wants
+  // the literal "auto", while Supabase Storage wants the project's real region
+  // and rejects "auto" in the signature.
+  //
+  // All of them or none. A half-configured bucket falls back to the local
+  // driver, and on a serverless host that means uploads appear to succeed and
+  // the photographs are gone by the next request — a failure with no error
+  // message anywhere. `s3Configured` is what makes that impossible.
+  get s3Configured(): boolean {
+    return S3_REQUIRED.every((names) => names.some((name) => process.env[name]));
   },
-  get r2Endpoint(): string {
-    return required("R2_ENDPOINT");
+  get s3Endpoint(): string {
+    return firstOf("S3_ENDPOINT", "R2_ENDPOINT");
   },
-  get r2Bucket(): string {
-    return required("R2_BUCKET");
+  get s3Bucket(): string {
+    return firstOf("S3_BUCKET", "R2_BUCKET");
   },
-  get r2AccessKeyId(): string {
-    return required("R2_ACCESS_KEY_ID");
+  get s3AccessKeyId(): string {
+    return firstOf("S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID");
   },
-  get r2SecretAccessKey(): string {
-    return required("R2_SECRET_ACCESS_KEY");
+  get s3SecretAccessKey(): string {
+    return firstOf("S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY");
+  },
+  get s3Region(): string {
+    // "auto" is R2's convention and is what it expects; Supabase needs its own.
+    return process.env["S3_REGION"] ?? process.env["R2_REGION"] ?? "auto";
   },
 
   get mlServiceUrl(): string {
     return optional("ML_SERVICE_URL", "http://127.0.0.1:8000");
+  },
+
+  /**
+   * Shared secret for the enrollment service. No default: every common
+   * container host gives that service a public URL, and unauthenticated it
+   * turns face photographs into biometric templates for anyone who finds it.
+   */
+  get mlServiceToken(): string {
+    return required("ML_SERVICE_TOKEN");
   },
 
   get signedUrlTtlSeconds(): number {
@@ -106,14 +138,6 @@ export const env = {
     return process.env.NODE_ENV === "production";
   },
 
-  /**
-   * Runs the search path on thresholds that have NOT been measured on a real
-   * labeled album. See src/lib/thresholds.ts — refused in production, and it
-   * puts a banner on every attendee page.
-   */
-  get devThresholds(): boolean {
-    return process.env["FACEAPP_DEV_THRESHOLDS"] === "1";
-  },
 } as const;
 
 export interface ConfigProblem {
@@ -153,7 +177,18 @@ export function configProblems(): ConfigProblem[] {
       what: "the Python enrollment service that turns selfie frames into a template",
       how:
         "It runs onnxruntime and cannot live in a serverless function. Deploy " +
-        "ml/ as a container (Fly.io, Railway, Render) and point this at it.",
+        "ml/ as a container (Railway, Render, Fly.io) and point this at it. " +
+        "See docs/DEPLOY_WALKTHROUGH.md.",
+    });
+  }
+  if (!process.env["ML_SERVICE_TOKEN"]) {
+    problems.push({
+      variable: "ML_SERVICE_TOKEN",
+      what: "the shared secret the enrollment service requires",
+      how:
+        "Generate with: openssl rand -base64 32 — then set the same value here " +
+        "and on the container. Without it that service is an open endpoint that " +
+        "turns face photographs into biometric templates.",
     });
   }
   return problems;
@@ -165,19 +200,16 @@ export function configProblems(): ConfigProblem[] {
  * succeed and the file is gone by the next request.
  */
 export function storageProblems(): ConfigProblem[] {
-  if (env.r2Configured) return [];
+  if (env.s3Configured) return [];
 
   const onServerless = Boolean(
     process.env["VERCEL"] ?? process.env["AWS_LAMBDA_FUNCTION_NAME"],
   );
   if (!onServerless) return [];
 
-  const partial = [
-    "R2_ENDPOINT",
-    "R2_BUCKET",
-    "R2_ACCESS_KEY_ID",
-    "R2_SECRET_ACCESS_KEY",
-  ].filter((name) => !process.env[name]);
+  const partial = S3_REQUIRED.filter(
+    (names) => !names.some((name) => process.env[name]),
+  ).map((names) => names[0]);
 
   return [
     {
@@ -186,8 +218,8 @@ export function storageProblems(): ConfigProblem[] {
       how:
         "Without these the local storage driver is used, and on a serverless " +
         "host its filesystem is read-only or discarded between requests — the " +
-        "upload appears to succeed and the photograph is gone. See " +
-        "docs/DEPLOYMENT.md.",
+        "upload appears to succeed and the photograph is gone. Supabase Storage " +
+        "and Cloudflare R2 both work; see docs/DEPLOY_WALKTHROUGH.md.",
     },
   ];
 }

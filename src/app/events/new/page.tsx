@@ -73,6 +73,26 @@ export default async function NewEventPage({
               <input className={inputClass} type="url" name="consentNoticeUrl" placeholder="https://" />
             </Field>
 
+            <label className="flex items-start gap-3 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn-bg)] p-3 text-[var(--color-warn-ink)]">
+              <input type="checkbox" name="isDemo" className="mt-1" />
+              <span className="text-sm">
+                <span className="font-medium">
+                  This is a demonstration, not a real event
+                </span>
+                <span className="mt-0.5 block">
+                  The photographs are mine, or I have permission to use them.
+                  Matching will run on placeholder thresholds that have not been
+                  measured on any album, so results are{" "}
+                  <strong>not trustworthy</strong> — strangers may appear and you
+                  may be missed. Retention is capped at 30 days.
+                </span>
+                <span className="mt-1.5 block text-xs opacity-80">
+                  Leave this unticked for a real event. Search will then refuse
+                  to run until thresholds are measured, which is the point.
+                </span>
+              </span>
+            </label>
+
             <label className="flex items-start gap-3 rounded-lg border border-[var(--color-line)] p-3">
               <input type="checkbox" name="isYouthEvent" className="mt-1" />
               <span className="text-sm">

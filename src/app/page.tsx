@@ -51,7 +51,15 @@ export default async function Home(): Promise<ReactNode> {
             This product needs a database, an always-on Python service for the
             face model, a background worker, and durable object storage. A
             serverless host runs the web app; it does not run the other three.
-            See the README.
+          </p>
+          <p className="mt-3 text-sm">
+            <Link href="/setup" className="font-medium underline underline-offset-2">
+              Run the setup checks
+            </Link>{" "}
+            <span className="opacity-80">
+              — these probe each dependency for real, rather than only checking
+              that a variable is set.
+            </span>
           </p>
         </div>
       ) : (

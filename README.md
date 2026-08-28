@@ -46,8 +46,11 @@ built from the group photograph bundled with InsightFace — six real faces, ten
 derived shots, with a manifest recording who is in which, so the search has a
 ground truth to be right or wrong about.
 
-Search runs in development mode against **placeholder thresholds**, which is why
-every page carries a warning banner. `NODE_ENV=production` refuses them outright.
+`seed-demo.sh` ticks the demonstration box when it creates the event, which is
+what lets the search run at all: matching is gated on measured thresholds, and a
+demonstration event is the one exception — capped at 30 days, labelled
+everywhere it appears, and answering `thresholdsTrusted: false`. A normal event
+returns 503 until the thresholds exist.
 
 ## What is where
 
@@ -129,7 +132,9 @@ impersonation hole the design closes. See [`e2e/README.md`](e2e/README.md).
 
 ## Deploying
 
-Full guide: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Click-by-click, with every value named:
+[`docs/DEPLOY_WALKTHROUGH.md`](docs/DEPLOY_WALKTHROUGH.md). The reasoning behind
+it: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 **This is four services, not one.** A serverless host runs the web app; it
 cannot run the other three, and pretending otherwise produces a deployment that
@@ -141,20 +146,26 @@ looks live and loses every photograph uploaded to it.
 | Postgres + pgvector | Supabase, Neon, RDS |
 | Enrollment service | `ml/Dockerfile`, role `service` — Fly.io, Railway, Render |
 | Ingestion worker | Same image, role `worker` |
-| Object storage | Cloudflare R2 (driver included) |
+| Object storage | Supabase Storage or Cloudflare R2 — one S3 driver, both |
 
 The web app degrades honestly: with anything missing, the home page names what
-is absent rather than returning a 500.
+is absent rather than returning a 500, and `/setup` probes each dependency for
+real — it connects, queries, signs a URL and calls the service, because knowing
+that a variable is set tells you nothing about whether the password is right.
 
 Two seams keep this from being tied to any vendor. `src/lib/auth.ts` is replaced
 wholesale by `@supabase/ssr` on a Supabase deployment. `src/lib/storage.ts` is an
-interface with two drivers — local filesystem for development, R2 for
-deployment — chosen by configuration, all-or-nothing so a half-configured bucket
-cannot silently fall back to a filesystem that does not persist.
+interface with two drivers — local filesystem for development, S3 for deployment
+— chosen by configuration, all-or-nothing so a half-configured bucket cannot
+silently fall back to a filesystem that does not persist.
+
+The enrollment service requires a bearer token. Every container host gives it a
+public URL, so "keep it off the internet" is advice you cannot follow; it
+refuses to start without a token instead.
 
 Still missing before a paid event: **measured thresholds** (search refuses to run
 without them, and should), WhatsApp delivery, a load test, and the legal pages.
-See §6 of the deployment guide and §10 of `docs/COMPLIANCE.md`.
+See §7 of the deployment guide and §10 of `docs/COMPLIANCE.md`.
 
 ## Reading order
 

@@ -2,8 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { env } from "./env";
-
 /**
  * The match thresholds, read from the same file the Python side reads, with the
  * same refusal to invent one.
@@ -16,9 +14,10 @@ import { env } from "./env";
  * tuned one, and 0.41 is the difference between a search result and a personal
  * data breach.
  *
- * There is a development escape hatch. It is deliberately loud, deliberately
- * refused in production, and deliberately marks every result it produces. See
- * DEV_THRESHOLDS below.
+ * There is one way past the refusal, and it is a property of the *event* rather
+ * than of the server: an operator who ticked the demonstration box. See
+ * DEV_THRESHOLDS below. It is never a default and never read from the
+ * environment.
  */
 
 export interface Thresholds {
@@ -38,14 +37,17 @@ export class UntunedThresholdError extends Error {
 }
 
 /**
- * Placeholder values for local development and demos ONLY.
+ * Placeholder values, for events explicitly marked as demonstrations.
  *
  * These are the midpoint of the range that ArcFace cosine similarity is
  * generally quoted at. That is precisely the number the spec tells you never to
  * ship: the right value depends on the detector, the model and the photographic
  * conditions of the album, and quoting a range is as far as anyone can go
- * without data. They exist so the application can be run and demonstrated
- * before a labeled album exists — not so it can be sold.
+ * without data.
+ *
+ * They are reachable only by passing `allowUntuned`, which only the search route
+ * does, and only for an event whose operator ticked the demonstration box. A
+ * real event gets an error instead.
  *
  * Everything that touches them is marked: the search response carries
  * `thresholdsTrusted: false`, the attendee page shows a banner, and the
@@ -73,12 +75,26 @@ function readScalar(toml: string, section: string, key: string): string | null {
   return match[1].replace(/^["']|["']$/g, "");
 }
 
-export async function loadThresholds(): Promise<Thresholds> {
+export interface LoadOptions {
+  /**
+   * Permit untuned placeholder thresholds.
+   *
+   * Set only for an event whose operator explicitly marked it a demonstration.
+   * Never a default, never derived from the environment: the question is
+   * whether *this album's* results can be trusted, and that is a property of
+   * the event rather than of the server it runs on.
+   */
+  allowUntuned?: boolean;
+}
+
+export async function loadThresholds(
+  options: LoadOptions = {},
+): Promise<Thresholds> {
   let toml: string;
   try {
     toml = await readFile(CONFIG_PATH, "utf8");
   } catch {
-    return untunedOrDev(`no threshold config at ${CONFIG_PATH}`);
+    return untunedOr(`no threshold config at ${CONFIG_PATH}`, options);
   }
 
   const status = readScalar(toml, "", "status");
@@ -86,7 +102,7 @@ export async function loadThresholds(): Promise<Thresholds> {
   const tLow = Number(readScalar(toml, "thresholds", "t_low"));
 
   if (status !== "tuned" || !Number.isFinite(tHigh) || !Number.isFinite(tLow)) {
-    return untunedOrDev("thresholds have not been measured yet");
+    return untunedOr("thresholds have not been measured yet", options);
   }
   if (!(tLow > 0 && tLow <= tHigh && tHigh < 1)) {
     throw new UntunedThresholdError(
@@ -145,17 +161,21 @@ export async function loadThresholds(): Promise<Thresholds> {
   };
 }
 
-function untunedOrDev(reason: string): Thresholds {
-  if (env.devThresholds && !env.isProduction) return DEV_THRESHOLDS;
+function untunedOr(reason: string, options: LoadOptions): Thresholds {
+  if (options.allowUntuned) return DEV_THRESHOLDS;
 
   throw new UntunedThresholdError(
     `${reason}.\n\n` +
-      `Search is disabled until thresholds are measured on a labeled album:\n` +
+      `Search is disabled for this event until thresholds are measured on a ` +
+      `labeled album:\n` +
       `  cd ml\n` +
       `  python -m eval.run --dataset eval/datasets/<name>\n` +
       `  python -m eval.select_thresholds --report eval/reports/<report>.json --write\n\n` +
-      `See ml/eval/README.md. To run the app without them for development only, ` +
-      `set FACEAPP_DEV_THRESHOLDS=1 — refused when NODE_ENV=production.`,
+      `See ml/eval/README.md.\n\n` +
+      `To try the product before that exists, create an event with the ` +
+      `demonstration box ticked. Those search on placeholder numbers, are ` +
+      `capped at 30 days, and are labelled as untrustworthy everywhere they ` +
+      `appear.`,
   );
 }
 

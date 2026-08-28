@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { UntrustedThresholdBanner } from "@/components/Chrome";
 import { SelfieCapture } from "@/components/SelfieCapture";
 import { asService } from "@/lib/db";
 
@@ -18,10 +19,11 @@ async function loadEvent(slug: string) {
     const { rows } = await db.query<{
       name: string;
       status: string;
+      is_demo: boolean;
       welcome_message: string | null;
       delete_after: string;
     }>(
-      `select name, status, welcome_message, delete_after
+      `select name, status, is_demo, welcome_message, delete_after
          from events where slug = $1 and delete_after > now()`,
       [slug],
     );
@@ -46,6 +48,12 @@ export default async function AttendeePage({
           <p className="mt-2 text-sm text-[var(--color-muted)]">{event.welcome_message}</p>
         ) : null}
       </header>
+
+      {event.is_demo ? (
+        <div className="mb-6">
+          <UntrustedThresholdBanner />
+        </div>
+      ) : null}
 
       {event.status !== "ready" ? (
         <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-6">

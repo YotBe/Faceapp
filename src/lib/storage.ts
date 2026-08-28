@@ -16,10 +16,11 @@ import { env } from "./env";
  *          cloud account. Useless on a serverless host, where the filesystem is
  *          read-only or discarded between requests.
  *
- *   r2     Cloudflare R2 over the S3 API. Presigned GETs come straight from R2,
- *          so photographs never transit our server and never touch its egress
- *          bill — which is most of the reason R2 was chosen over Supabase
- *          Storage for albums past ~200GB.
+ *   s3     Any S3-compatible object store: Cloudflare R2, Supabase Storage.
+ *          Presigned GETs come straight from the store, so photographs never
+ *          transit our server and never touch its egress bill. R2 is the better
+ *          choice past ~200GB because it charges no egress at all; Supabase
+ *          Storage is the simpler one when the database is already there.
  *
  * Both hand out URLs that stop working. That is the property the product needs:
  * without an expiry, one shared link becomes permanent public access to a
@@ -28,7 +29,7 @@ import { env } from "./env";
  */
 
 export interface StorageDriver {
-  readonly kind: "local" | "r2";
+  readonly kind: "local" | "s3";
   put(bucket: string, key: string, body: Uint8Array, contentType?: string): Promise<void>;
   delete(bucket: string, key: string): Promise<void>;
   exists(bucket: string, key: string): Promise<boolean>;
@@ -151,8 +152,8 @@ export class LocalStorage implements StorageDriver {
 // R2 driver
 // ---------------------------------------------------------------------------
 
-export class R2Storage implements StorageDriver {
-  readonly kind = "r2" as const;
+export class S3Storage implements StorageDriver {
+  readonly kind = "s3" as const;
   private client: import("@aws-sdk/client-s3").S3Client | null = null;
 
   /**
@@ -164,13 +165,17 @@ export class R2Storage implements StorageDriver {
     if (!this.client) {
       const { S3Client } = await import("@aws-sdk/client-s3");
       this.client = new S3Client({
-        // R2 has no regions, but the S3 protocol requires one in the signature.
-        region: "auto",
-        endpoint: env.r2Endpoint,
+        // R2 has no regions and wants the literal "auto"; Supabase Storage
+        // wants the project's real region and rejects "auto" in the signature.
+        region: env.s3Region,
+        endpoint: env.s3Endpoint,
         credentials: {
-          accessKeyId: env.r2AccessKeyId,
-          secretAccessKey: env.r2SecretAccessKey,
+          accessKeyId: env.s3AccessKeyId,
+          secretAccessKey: env.s3SecretAccessKey,
         },
+        // Supabase Storage's S3 endpoint addresses buckets by path, not by
+        // subdomain. R2 accepts either.
+        forcePathStyle: true,
       });
     }
     return this.client;
@@ -182,7 +187,7 @@ export class R2Storage implements StorageDriver {
     const { PutObjectCommand } = await import("@aws-sdk/client-s3");
     await (await this.s3()).send(
       new PutObjectCommand({
-        Bucket: env.r2Bucket,
+        Bucket: env.s3Bucket,
         Key: `${bucket}/${key}`,
         Body: body,
         ...(contentType ? { ContentType: contentType } : {}),
@@ -193,7 +198,7 @@ export class R2Storage implements StorageDriver {
   async delete(bucket: string, key: string) {
     const { DeleteObjectCommand } = await import("@aws-sdk/client-s3");
     await (await this.s3()).send(
-      new DeleteObjectCommand({ Bucket: env.r2Bucket, Key: `${bucket}/${key}` }),
+      new DeleteObjectCommand({ Bucket: env.s3Bucket, Key: `${bucket}/${key}` }),
     );
   }
 
@@ -201,7 +206,7 @@ export class R2Storage implements StorageDriver {
     const { HeadObjectCommand } = await import("@aws-sdk/client-s3");
     try {
       await (await this.s3()).send(
-        new HeadObjectCommand({ Bucket: env.r2Bucket, Key: `${bucket}/${key}` }),
+        new HeadObjectCommand({ Bucket: env.s3Bucket, Key: `${bucket}/${key}` }),
       );
       return true;
     } catch {
@@ -212,7 +217,7 @@ export class R2Storage implements StorageDriver {
   async getStream(bucket: string, key: string): Promise<Readable> {
     const { GetObjectCommand } = await import("@aws-sdk/client-s3");
     const result = await (await this.s3()).send(
-      new GetObjectCommand({ Bucket: env.r2Bucket, Key: `${bucket}/${key}` }),
+      new GetObjectCommand({ Bucket: env.s3Bucket, Key: `${bucket}/${key}` }),
     );
     if (!result.Body) throw new Error(`${bucket}/${key} has no body`);
     return result.Body as Readable;
@@ -225,7 +230,7 @@ export class R2Storage implements StorageDriver {
     const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
     return getSignedUrl(
       await this.s3(),
-      new GetObjectCommand({ Bucket: env.r2Bucket, Key: `${bucket}/${key}` }),
+      new GetObjectCommand({ Bucket: env.s3Bucket, Key: `${bucket}/${key}` }),
       { expiresIn: ttlSeconds },
     );
   }
@@ -240,15 +245,20 @@ let driver: StorageDriver | null = null;
 /**
  * The configured driver.
  *
- * R2 whenever it is fully configured, local otherwise. Deliberately not
- * "whichever the operator asked for": a half-configured R2 that silently falls
- * back to a local filesystem on a serverless host is the failure that loses
- * photographs without erroring, so `env.r2Configured` requires all four values
- * or none.
+ * S3 whenever it is fully configured, local otherwise. Deliberately not
+ * "whichever the operator asked for": a half-configured bucket that silently
+ * falls back to a local filesystem on a serverless host is the failure that
+ * loses photographs without erroring, so `env.s3Configured` requires every
+ * value or none.
  */
 export function storage(): StorageDriver {
-  driver ??= env.r2Configured ? new R2Storage() : new LocalStorage(env.storageRoot);
+  driver ??= env.s3Configured ? new S3Storage() : new LocalStorage(env.storageRoot);
   return driver;
+}
+
+/** Test seam: forget the cached driver after changing the environment. */
+export function resetStorageForTests(): void {
+  driver = null;
 }
 
 /** Only meaningful for the local driver; used by the /api/files route. */

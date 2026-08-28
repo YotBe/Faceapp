@@ -17,6 +17,8 @@ export async function POST(request: Request) {
       jurisdiction: String(form.get("jurisdiction") ?? "IL"),
       retentionDays: Number(form.get("retentionDays") ?? 60),
       isYouthEvent: form.get("isYouthEvent") === "on",
+      isDemo: form.get("isDemo") === "on",
+      acknowledgedBy: session.email,
       consentNoticeUrl: String(form.get("consentNoticeUrl") ?? ""),
     });
     return redirectTo(`/events/${event.id}`);

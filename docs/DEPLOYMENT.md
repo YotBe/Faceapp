@@ -10,10 +10,16 @@ deployment that looks live and loses every photograph uploaded to it.
 | Database | Postgres **with pgvector** | Supabase, Neon, RDS, your own |
 | Enrollment service | Python, onnxruntime, ~400MB resident | A container. Fly.io, Railway, Render |
 | Ingestion worker | Long-running queue consumer | The same container image, different role |
-| Object storage | Originals, previews, thumbnails | Cloudflare R2 |
+| Object storage | Originals, previews, thumbnails | Supabase Storage, Cloudflare R2 |
 
 The web app degrades honestly: with anything missing, the home page names what
-is absent instead of returning a 500.
+is absent instead of returning a 500, and `/setup` probes every dependency for
+real — it connects, queries, signs and calls, rather than checking whether a
+variable happens to be set.
+
+**For the click-by-click version of all of this — Supabase, Railway and Vercel,
+with every value named — see [`DEPLOY_WALKTHROUGH.md`](DEPLOY_WALKTHROUGH.md).**
+This document is the reasoning behind it.
 
 ---
 
@@ -39,9 +45,21 @@ a real recall loss, not a warning to ignore.
 
 Set a region in the EU or Israel for EU events. It cannot be changed later.
 
-## 2. Object storage (Cloudflare R2)
+## 2. Object storage
 
-Create a bucket. Then an R2 API token with **Object Read & Write** scoped to it.
+Anything that speaks S3. Supabase Storage and Cloudflare R2 are both first-class;
+one driver covers both.
+
+```
+S3_ENDPOINT=https://<project-ref>.storage.supabase.co/storage/v1/s3
+S3_REGION=eu-central-1
+S3_BUCKET=faceapp-photos
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+```
+
+The `R2_*` names are accepted as aliases, so an existing R2 configuration keeps
+working unchanged:
 
 ```
 R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
@@ -50,15 +68,23 @@ R2_ACCESS_KEY_ID=...
 R2_SECRET_ACCESS_KEY=...
 ```
 
-All four, or none. A partially configured R2 falls back to the local filesystem
-driver, and on a serverless host that filesystem is read-only or discarded
-between requests — the upload succeeds, no error is logged anywhere, and the
-photograph is gone. Both the web app and the worker refuse to start in that
-state rather than fall back.
+Region is configuration rather than a constant because the two providers
+disagree: R2 has no regions and wants the literal `auto`, while Supabase signs
+with the project's real region and rejects `auto`. The default is `auto`, which
+is right for R2 and wrong for everyone else.
 
-Attendees get presigned URLs straight from R2, so photographs never transit the
-web app and never touch its egress bill. That is most of why R2 is here rather
-than Supabase Storage; the difference is real once an album passes ~200GB.
+All of them, or none. A partially configured bucket falls back to the local
+filesystem driver, and on a serverless host that filesystem is read-only or
+discarded between requests — the upload succeeds, no error is logged anywhere,
+and the photograph is gone. `env.s3Configured` is what makes that impossible;
+both the web app and the worker refuse to start in a half-configured state
+rather than fall back.
+
+Attendees get presigned URLs straight from the bucket, so photographs never
+transit the web app and never touch its egress bill. R2 becomes worth the extra
+account somewhere past ~200GB, where its lack of egress charges starts to
+matter; below that, keeping storage in the same Supabase project as the database
+is one fewer vendor and one fewer DPA.
 
 Do **not** make the bucket public. Every URL the product hands out expires,
 which is the whole point.
@@ -71,13 +97,15 @@ One image, two roles.
 docker build -t faceapp-ml ml/
 
 docker run -d --name faceapp-service -p 8000:8000 \
-  -e DATABASE_URL=... -e R2_ENDPOINT=... -e R2_BUCKET=... \
-  -e R2_ACCESS_KEY_ID=... -e R2_SECRET_ACCESS_KEY=... \
+  -e DATABASE_URL=... -e ML_SERVICE_TOKEN=... \
+  -e S3_ENDPOINT=... -e S3_REGION=... -e S3_BUCKET=... \
+  -e S3_ACCESS_KEY_ID=... -e S3_SECRET_ACCESS_KEY=... \
   faceapp-ml service
 
 docker run -d --name faceapp-worker \
-  -e DATABASE_URL=... -e R2_ENDPOINT=... -e R2_BUCKET=... \
-  -e R2_ACCESS_KEY_ID=... -e R2_SECRET_ACCESS_KEY=... \
+  -e DATABASE_URL=... -e ML_SERVICE_TOKEN=... \
+  -e S3_ENDPOINT=... -e S3_REGION=... -e S3_BUCKET=... \
+  -e S3_ACCESS_KEY_ID=... -e S3_SECRET_ACCESS_KEY=... \
   faceapp-ml worker
 ```
 
@@ -96,10 +124,17 @@ The enrollment service is memory-bound, not CPU-bound: one process, ~1GB, and
 scale with replicas. `--workers 2` doubles the memory because uvicorn workers do
 not share the model.
 
-**The service must not be internet-facing.** It has no authentication — it
-answers to whoever can reach it, and what it does is turn face photographs into
-biometric templates. Put it on a private network and let only the web app reach
-it. On Fly.io that is a `.internal` address; on Railway, a private domain.
+**`/enroll` requires `Authorization: Bearer $ML_SERVICE_TOKEN`.** What that
+endpoint does is turn face photographs into biometric templates, and Railway,
+Render and Fly all hand a container a public URL — advice to "keep it off the
+internet" is advice to do something the platform does not offer. So the service
+refuses to start without a token of at least 16 characters, rather than
+defaulting to open. `/health` stays unauthenticated and returns no detail,
+because the platform's health check needs it.
+
+Still prefer a private network where one exists — a Fly `.internal` address or a
+Railway private domain — and set the token as well. The token is what makes a
+public URL survivable, not a reason to choose one.
 
 ## 4. Web app
 
@@ -110,10 +145,12 @@ DATABASE_URL=postgres://...
 APP_SECRET=<openssl rand -base64 48>
 IP_HASH_SECRET=<a different one>
 ML_SERVICE_URL=http://faceapp-service.internal:8000
-R2_ENDPOINT=...
-R2_BUCKET=...
-R2_ACCESS_KEY_ID=...
-R2_SECRET_ACCESS_KEY=...
+ML_SERVICE_TOKEN=<the same value as the container>
+S3_ENDPOINT=...
+S3_REGION=...
+S3_BUCKET=...
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
 SEARCH_RATE_LIMIT_PER_HOUR=3
 ```
 
@@ -124,22 +161,37 @@ URLs for a stranger's photographs.
 `IP_HASH_SECRET` salts the hash in `search_logs`. Separate so it can be rotated
 on its own, which is the point of salting.
 
-**Do not set `FACEAPP_DEV_THRESHOLDS`.** It is refused when
-`NODE_ENV=production` anyway, but it should not be in a production environment's
-variable list at all.
+`ML_SERVICE_TOKEN` must be byte-identical here and on both containers.
+Copy it rather than retyping; a trailing newline from a shell is the usual
+cause of a search that fails with a token error against a token that looks
+right.
+
+There is **no environment variable that turns on untuned thresholds**. There
+used to be, and it was the wrong shape: it applied to every event in a
+deployment at once. The gate is now per event — see §6 — so a demonstration and
+a real wedding can live on the same deployment with only one of them able to
+search.
 
 ## 5. Scheduled jobs
 
-**Retention** — hourly. On Supabase this is already scheduled by
-`20260827090200_retention.sql` via pg_cron. Elsewhere, run
-`select run_retention(500);` on a schedule and check it is actually running: a
-retention job that silently stopped looks exactly like one that has nothing to do.
+**Retention** — hourly. `20260827090200_retention.sql` schedules it via
+pg_cron where that extension can be installed, and prints a notice where it
+cannot. Which of the two happened is worth checking rather than assuming:
+
+```sql
+select jobname, schedule, active from cron.job;   -- errors if pg_cron is absent
+```
+
+Where it is absent, run `select run_retention(500);` from an external scheduler
+and confirm it is actually running. A retention job that silently stopped looks
+exactly like one that has nothing to do.
 
 **Storage GC** — every 15 minutes or so, after retention:
 
 ```bash
-docker run --rm -e DATABASE_URL=... -e R2_ENDPOINT=... -e R2_BUCKET=... \
-  -e R2_ACCESS_KEY_ID=... -e R2_SECRET_ACCESS_KEY=... \
+docker run --rm -e DATABASE_URL=... \
+  -e S3_ENDPOINT=... -e S3_REGION=... -e S3_BUCKET=... \
+  -e S3_ACCESS_KEY_ID=... -e S3_SECRET_ACCESS_KEY=... \
   faceapp-ml storage-gc
 ```
 
@@ -159,7 +211,35 @@ docker run --rm -e DATABASE_URL=... faceapp-ml storage-gc --status
 **Clustering** — after an album finishes indexing:
 `docker run faceapp-ml cluster --all-ready`. Optional below ~50k photographs.
 
-## 6. Before a paying customer
+## 6. Thresholds, and demonstration events
+
+Search refuses to run until `ml/config/thresholds.toml` carries numbers
+traceable to an eval report. A deployed instance therefore answers `503
+search_unavailable` on every event, which is correct and also makes it
+impossible to demonstrate — so there is exactly one way through it.
+
+An event created with **"This is a demonstration"** ticked searches on
+placeholder numbers. Nothing else does. That event:
+
+- is capped at 30 days' retention by a CHECK constraint, not by the application;
+- records who ticked the box and when (`demo_acknowledged_by`,
+  `demo_acknowledged_at`);
+- is labelled on the dashboard and on the event page;
+- puts a banner on the attendee page;
+- returns `thresholdsTrusted: false` in the search response.
+
+This is a tighter rule than the environment variable it replaced, not a looser
+one: that variable turned untuned thresholds on for every event in a
+deployment, invisibly. This is per event, opted into, recorded and labelled.
+
+A demonstration event is still a demonstration. Do not point one at a real
+album, and check before an event goes live:
+
+```sql
+select slug, is_demo, delete_after from events where is_demo;
+```
+
+## 7. Before a paying customer
 
 - [ ] **Thresholds measured on a labeled album.** Search refuses to run without
       them, and it should. See `ml/eval/README.md`. Nothing else on this list
@@ -168,7 +248,10 @@ docker run --rm -e DATABASE_URL=... faceapp-ml storage-gc --status
 - [ ] The DPA in `docs/DPA-template.md` reviewed by a lawyer and signed by the
       organizer.
 - [ ] Region confirmed EU or Israel for EU events.
-- [ ] The ML service confirmed unreachable from the internet.
+- [ ] `ML_SERVICE_TOKEN` set, and `POST /enroll` without it confirmed to
+      return 401 from outside.
+- [ ] No event in the database with `is_demo = true` that anyone might mistake
+      for a real one: `select slug, is_demo, delete_after from events;`
 - [ ] A backup restored, not merely configured.
 - [ ] Load tested at the concurrency you expect.
 
@@ -179,7 +262,8 @@ Per 50,000-photo event, ~300k faces:
 - Indexing: ~7 core-hours at three surviving faces per photograph. A few dollars
   of shared CPU. (The spec's model assumed 250ms per photograph; measured, it is
   closer to 550ms for a three-face shot. Budget about twice the spec.)
-- Storage: 200GB on R2, ~$3/month, no egress charge.
+- Storage: 200GB — ~$3/month on R2 with no egress charge, or ~$4/month plus
+  egress on Supabase Storage.
 - Vectors: 300k × 512 × 4 bytes ≈ 600MB plus index overhead. A small Postgres.
 - Search: negligible once clustered.
 

@@ -46,7 +46,7 @@ export default async function EventPage({
 
   let thresholdState: { trusted: boolean; source: string } | { error: string };
   try {
-    const t = await loadThresholds();
+    const t = await loadThresholds({ allowUntuned: event.is_demo });
     thresholdState = { trusted: t.trusted, source: t.source };
   } catch (error) {
     thresholdState = {

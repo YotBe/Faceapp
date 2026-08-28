@@ -59,6 +59,11 @@ export default async function DashboardPage(): Promise<ReactNode> {
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <h2 className="truncate font-medium">{event.name}</h2>
+                          {event.is_demo ? (
+                            <span className="rounded bg-[var(--color-warn-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-warn-ink)]">
+                              Demo — results not trustworthy
+                            </span>
+                          ) : null}
                           {event.is_youth_event ? (
                             <span className="rounded bg-[var(--color-warn-bg)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-warn-ink)]">
                               Youth event

@@ -88,12 +88,12 @@ class LocalStorage(Storage):
         return self.path(key).exists()
 
 
-class R2Storage(Storage):
-    """Cloudflare R2 over the S3 API.
+class S3Storage(Storage):
+    """Any S3-compatible object store: Cloudflare R2, Supabase Storage.
 
     Keys are prefixed with the logical bucket name, matching the TypeScript
-    driver, so one R2 bucket holds every logical bucket the app uses and the two
-    processes address the same objects.
+    driver, so one real bucket holds every logical bucket the app uses and the
+    two processes address the same objects.
     """
 
     def __init__(
@@ -104,6 +104,7 @@ class R2Storage(Storage):
         access_key_id: str,
         secret_access_key: str,
         logical_bucket: str,
+        region: str = "auto",
     ) -> None:
         try:
             import boto3
@@ -120,11 +121,14 @@ class R2Storage(Storage):
             endpoint_url=endpoint,
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
-            # R2 has no regions, but the S3 signature requires one.
-            region_name="auto",
+            # R2 has no regions and wants the literal "auto"; Supabase Storage
+            # wants the project's real region and rejects "auto".
+            region_name=region,
             config=Config(
                 signature_version="s3v4",
                 retries={"max_attempts": 5, "mode": "standard"},
+                # Supabase Storage addresses buckets by path, not subdomain.
+                s3={"addressing_style": "path"},
             ),
         )
 
@@ -154,41 +158,49 @@ class R2Storage(Storage):
             return False
 
 
+# Each entry is one setting; the names inside it are interchangeable. The R2_*
+# spellings came first and are kept so nothing already deployed breaks.
+_S3_SETTINGS = (
+    ("S3_ENDPOINT", "R2_ENDPOINT"),
+    ("S3_BUCKET", "R2_BUCKET"),
+    ("S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID"),
+    ("S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY"),
+)
+
+
+def _first_of(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
 def from_env(root: Path | str, logical_bucket: str = "event-photos") -> Storage:
-    """R2 when fully configured, local otherwise.
+    """S3-compatible storage when fully configured, local otherwise.
 
-    All four variables or none, matching `env.r2Configured` on the web side. A
-    partially configured R2 that quietly falls back to a local filesystem is the
-    failure that loses photographs without erroring anywhere.
+    Every value or none, matching `env.s3Configured` on the web side. A
+    partially configured bucket that quietly falls back to a local filesystem is
+    the failure that loses photographs without erroring anywhere.
     """
-    endpoint = os.environ.get("R2_ENDPOINT")
-    bucket = os.environ.get("R2_BUCKET")
-    key_id = os.environ.get("R2_ACCESS_KEY_ID")
-    secret = os.environ.get("R2_SECRET_ACCESS_KEY")
+    values = [_first_of(*names) for names in _S3_SETTINGS]
 
-    if endpoint and bucket and key_id and secret:
-        return R2Storage(
-            endpoint=endpoint,
-            bucket=bucket,
-            access_key_id=key_id,
-            secret_access_key=secret,
+    if all(values):
+        endpoint, bucket, key_id, secret = values
+        return S3Storage(
+            endpoint=str(endpoint),
+            bucket=str(bucket),
+            access_key_id=str(key_id),
+            secret_access_key=str(secret),
             logical_bucket=logical_bucket,
+            region=_first_of("S3_REGION", "R2_REGION") or "auto",
         )
 
-    partial = [
-        name
-        for name, value in [
-            ("R2_ENDPOINT", endpoint),
-            ("R2_BUCKET", bucket),
-            ("R2_ACCESS_KEY_ID", key_id),
-            ("R2_SECRET_ACCESS_KEY", secret),
-        ]
-        if not value
-    ]
-    if len(partial) != 4:
+    missing = [names[0] for names, value in zip(_S3_SETTINGS, values, strict=True) if not value]
+    if len(missing) != len(_S3_SETTINGS):
         raise SystemExit(
-            "R2 is partially configured; missing " + ", ".join(partial) + ".\n"
-            "Set all four or none — falling back to local storage with some of "
+            "Object storage is partially configured; missing " + ", ".join(missing) + ".\n"
+            "Set all of them or none — falling back to local storage with some of "
             "them set is how photographs get written somewhere they will not be "
             "found again."
         )
