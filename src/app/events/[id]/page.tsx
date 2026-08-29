@@ -7,10 +7,81 @@ import { Card, Nav, UntrustedThresholdBanner } from "@/components/Chrome";
 import { Uploader } from "@/components/Uploader";
 import { getSession } from "@/lib/auth";
 import { asOperator } from "@/lib/db";
-import { failedPhotos, getEvent, ingestProgress } from "@/lib/events";
+import {
+  failedPhotos,
+  getEvent,
+  ingestProgress,
+  recentSearches,
+  summariseSearches,
+} from "@/lib/events";
 import { UntunedThresholdError, loadThresholds } from "@/lib/thresholds";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * One search's top score, against the threshold that decided it.
+ *
+ * The number on its own says nothing; the number next to the line it had to
+ * clear says everything. A run full of misses at 0.48 against a T_high of 0.50
+ * is a threshold slightly too strict for this album — which looks exactly like
+ * "the product does not work" when all you have is the attendee telling you
+ * they got nothing.
+ */
+function ScoreBar({
+  score,
+  tHigh,
+  tLow,
+}: {
+  score: number | null;
+  tHigh?: number;
+  tLow?: number;
+}) {
+  if (score === null) return <span className="text-[var(--color-muted)]">—</span>;
+
+  // A fixed window rather than one scaled to the data: the marks have to sit in
+  // the same place on every row, and cosine similarity on these embeddings does
+  // not meaningfully leave it.
+  const lo = 0.2;
+  const hi = 0.8;
+  const pct = (v: number) => `${Math.min(100, Math.max(0, ((v - lo) / (hi - lo)) * 100))}%`;
+  const cleared = tHigh !== undefined && score >= tHigh;
+
+  return (
+    <span className="flex items-center gap-2">
+      <span className="relative h-3 w-28 overflow-hidden rounded-sm bg-[var(--color-canvas)]">
+        <span
+          className={`absolute inset-y-0 left-0 ${
+            cleared ? "bg-[var(--color-accent)]" : "bg-[var(--color-muted)]"
+          }`}
+          style={{ width: pct(score) }}
+        />
+        {tLow !== undefined ? (
+          <span
+            className="absolute inset-y-0 w-px bg-[var(--color-line)]"
+            style={{ left: pct(tLow) }}
+            title={`T_low ${tLow}`}
+          />
+        ) : null}
+        {tHigh !== undefined ? (
+          <span
+            className="absolute inset-y-0 w-px bg-[var(--color-ink)]"
+            style={{ left: pct(tHigh) }}
+            title={`T_high ${tHigh}`}
+          />
+        ) : null}
+      </span>
+      <span className="tabular-nums">{score.toFixed(3)}</span>
+    </span>
+  );
+}
+
+const OUTCOME_LABEL: Record<string, string> = {
+  ok: "found photos",
+  no_match: "nothing matched",
+  rate_limited: "rate limited",
+  rejected_quality: "capture rejected",
+  error: "failed",
+};
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "warn" }) {
   return (
@@ -39,15 +110,22 @@ export default async function EventPage({
   const event = await getEvent(session.operatorId, id);
   if (!event) notFound();
 
-  const { progress, failures } = await asOperator(session.operatorId, async (db) => ({
-    progress: await ingestProgress(db, id),
-    failures: await failedPhotos(db, id),
-  }));
+  const { progress, failures, searches } = await asOperator(
+    session.operatorId,
+    async (db) => ({
+      progress: await ingestProgress(db, id),
+      failures: await failedPhotos(db, id),
+      searches: await recentSearches(db, id),
+    }),
+  );
+  const searchStats = summariseSearches(searches);
 
-  let thresholdState: { trusted: boolean; source: string } | { error: string };
+  let thresholdState:
+    | { trusted: boolean; source: string; tHigh: number; tLow: number }
+    | { error: string };
   try {
     const t = await loadThresholds({ allowUntuned: event.is_demo });
-    thresholdState = { trusted: t.trusted, source: t.source };
+    thresholdState = { trusted: t.trusted, source: t.source, tHigh: t.tHigh, tLow: t.tLow };
   } catch (error) {
     thresholdState = {
       error:
@@ -179,6 +257,108 @@ export default async function EventPage({
             </Link>
           </Card>
         </div>
+
+        {searches.length ? (
+          <Card className="p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="font-medium">Searches</h2>
+              <p className="text-sm text-[var(--color-muted)]">
+                {searches.length === 1
+                  ? "One attempt so far."
+                  : `The last ${searches.length} attempts.`}{" "}
+                No IP, no selfie, no embedding — this is what was already being
+                recorded.
+              </p>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-5">
+              <Stat label="Found photos" value={searchStats.found.toLocaleString()} />
+              <Stat
+                label="Matched nothing"
+                value={searchStats.empty.toLocaleString()}
+                {...(searchStats.empty > searchStats.found ? { tone: "warn" as const } : {})}
+              />
+              <Stat label="Capture rejected" value={searchStats.poorCapture.toLocaleString()} />
+              <Stat
+                label="Failed"
+                value={searchStats.failed.toLocaleString()}
+                {...(searchStats.failed > 0 ? { tone: "warn" as const } : {})}
+              />
+              <Stat
+                label="Median time"
+                value={
+                  searchStats.medianDurationMs === null
+                    ? "—"
+                    : `${(searchStats.medianDurationMs / 1000).toFixed(1)}s`
+                }
+              />
+            </div>
+
+            {searchStats.bestMiss !== null &&
+            !("error" in thresholdState) &&
+            searchStats.bestMiss >= thresholdState.tLow ? (
+              <p className="mt-4 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn-bg)] px-3 py-2 text-sm text-[var(--color-warn-ink)]">
+                <strong>
+                  A search that returned nothing had a best score of{" "}
+                  {searchStats.bestMiss.toFixed(3)}, against a T_high of{" "}
+                  {thresholdState.tHigh}.
+                </strong>{" "}
+                That is a near miss rather than a stranger: someone who is in this
+                album did not get their photographs. If it keeps happening, the
+                thresholds were measured on an album easier than this one — re-run
+                the eval against this one rather than editing the numbers.
+              </p>
+            ) : null}
+
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="text-left text-xs uppercase tracking-wide text-[var(--color-muted)]">
+                  <tr>
+                    <th className="pb-2 font-medium">When</th>
+                    <th className="pb-2 font-medium">Outcome</th>
+                    <th className="pb-2 font-medium">Returned</th>
+                    <th className="pb-2 font-medium">Best score</th>
+                    <th className="pb-2 font-medium">Took</th>
+                  </tr>
+                </thead>
+                <tbody className="align-middle">
+                  {searches.map((search) => (
+                    <tr key={search.created_at} className="border-t border-[var(--color-line)]">
+                      <td className="py-2 pr-3 tabular-nums text-[var(--color-muted)]">
+                        {new Date(search.created_at).toLocaleTimeString()}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {OUTCOME_LABEL[search.outcome] ?? search.outcome}
+                      </td>
+                      <td className="py-2 pr-3 tabular-nums">
+                        {search.results_returned}
+                        {search.maybe_returned > 0 ? (
+                          <span className="text-[var(--color-muted)]">
+                            {" "}
+                            + {search.maybe_returned} maybe
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <ScoreBar
+                          score={search.top_score}
+                          {...("error" in thresholdState
+                            ? {}
+                            : { tHigh: thresholdState.tHigh, tLow: thresholdState.tLow })}
+                        />
+                      </td>
+                      <td className="py-2 tabular-nums text-[var(--color-muted)]">
+                        {search.duration_ms === null
+                          ? "—"
+                          : `${(search.duration_ms / 1000).toFixed(1)}s`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        ) : null}
 
         {failures.length ? (
           <Card className="p-5">

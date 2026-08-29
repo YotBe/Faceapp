@@ -146,6 +146,89 @@ export async function ingestProgress(
   return progress;
 }
 
+/**
+ * What actually happened when people searched.
+ *
+ * `search_logs` has recorded this since Phase 3 and nothing has ever displayed
+ * it. During a run with people whose faces you know, it is the test instrument:
+ * it is how you find the attendee who got nothing back, and how you see a top
+ * score sitting just under T_high — which is a threshold that is slightly too
+ * strict for this album, and is indistinguishable from "the product does not
+ * work" if you only have the attendee's word for it.
+ *
+ * No new data is collected for this. Every column below was already being
+ * written, deliberately without an IP, without an embedding and without
+ * anything identifying the person who searched.
+ */
+export interface SearchRecord {
+  created_at: string;
+  outcome: string;
+  results_returned: number;
+  maybe_returned: number;
+  top_score: number | null;
+  duration_ms: number | null;
+}
+
+export interface SearchSummary {
+  total: number;
+  found: number;
+  /** Searched, matched nothing. The number to look at after a run. */
+  empty: number;
+  rateLimited: number;
+  poorCapture: number;
+  failed: number;
+  medianDurationMs: number | null;
+  /** Highest score among searches that came back with nothing. */
+  bestMiss: number | null;
+}
+
+export async function recentSearches(
+  db: Db,
+  eventId: string,
+  limit = 50,
+): Promise<SearchRecord[]> {
+  const { rows } = await db.query<SearchRecord>(
+    `select created_at, outcome, results_returned, maybe_returned,
+            top_score, duration_ms
+       from search_logs
+      where event_id = $1
+      order by created_at desc
+      limit $2`,
+    [eventId, limit],
+  );
+  return rows;
+}
+
+export function summariseSearches(rows: SearchRecord[]): SearchSummary {
+  const count = (outcome: string) => rows.filter((r) => r.outcome === outcome).length;
+
+  const durations = rows
+    .map((r) => r.duration_ms)
+    .filter((d): d is number => typeof d === "number")
+    .sort((a, b) => a - b);
+
+  // Median rather than mean: one cold start on a sleeping container is a minute
+  // long and would drag an average somewhere that describes no actual search.
+  const median = durations.length
+    ? durations[Math.floor(durations.length / 2)] ?? null
+    : null;
+
+  const misses = rows
+    .filter((r) => r.outcome === "no_match" && typeof r.top_score === "number")
+    .map((r) => r.top_score as number);
+
+  return {
+    total: rows.length,
+    found: count("ok"),
+    empty: count("no_match"),
+    rateLimited: count("rate_limited"),
+    poorCapture: count("rejected_quality"),
+    failed: count("error"),
+    medianDurationMs: median,
+    bestMiss: misses.length ? Math.max(...misses) : null,
+  };
+}
+
 export interface FailedPhoto {
   id: string;
   storage_key: string;
