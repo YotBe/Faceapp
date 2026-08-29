@@ -83,16 +83,30 @@ def test_a_short_token_is_refused_as_well(monkeypatch: pytest.MonkeyPatch) -> No
         service._token()
 
 
-def test_health_needs_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_health_needs_no_token(client: TestClient) -> None:
     # The container host's health check cannot hold a credential. It does no
     # work and reveals only which model is configured, which is in the
     # repository anyway.
-    monkeypatch.setenv("ML_SERVICE_TOKEN", TOKEN)
-    service = importlib.import_module("faceapp_worker.service")
-    importlib.reload(service)
-
-    monkeypatch.setattr(service, "engine", lambda: type("E", (), {"name": "stub"})())
-    response = TestClient(service.app).get("/health")
+    response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+def test_health_does_not_load_the_model(client: TestClient, monkeypatch) -> None:
+    """It used to, and that was two problems at once.
+
+    The health check took the better part of a minute, which is most of a
+    platform's patience; and a caller could not tell a container that was warming
+    up from one that was dead, because both simply failed to answer. Now the
+    process answers immediately and says which it is.
+    """
+    service = importlib.import_module("faceapp_worker.service")
+    monkeypatch.setattr(
+        service, "engine", lambda: pytest.fail("/health must not load the model")
+    )
+
+    body = client.get("/health").json()
+
+    assert body["model_loaded"] is False
+    assert body["engine"]

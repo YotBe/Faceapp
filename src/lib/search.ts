@@ -13,6 +13,14 @@ import { bucketOf, type Thresholds } from "./thresholds";
 
 export interface MatchedPhoto {
   photoId: string;
+  /**
+   * The best-scoring face in this photograph — the one that made it a match.
+   *
+   * Carried so a keep-link can be re-checked against the opt-out registry when
+   * it is opened rather than only when it was made. Without it, a link issued
+   * before somebody opted out would keep working afterwards.
+   */
+  faceId: string;
   /** Storage keys. Turned into expiring URLs by `signUrls`, never returned raw. */
   previewKey: string | null;
   thumbKey: string | null;
@@ -37,6 +45,7 @@ export interface SearchOutcome {
 }
 
 interface FaceRow {
+  face_id: string;
   photo_id: string;
   similarity: number;
   quality_tier: number;
@@ -114,7 +123,8 @@ export async function searchEvent(
 
   const { rows } = await db.query<FaceRow>(
     `
-    select f.photo_id,
+    select f.id as face_id,
+           f.photo_id,
            1 - (f.embedding <=> $1::vector) as similarity,
            f.quality_tier, f.face_px, f.bbox,
            p.preview_key, p.thumb_key, p.width, p.height,
@@ -137,6 +147,82 @@ export async function searchEvent(
   );
 
   return signUrls(rank(rows, thresholds));
+}
+
+/**
+ * The photographs a set of already-matched faces belong to.
+ *
+ * This is how a keep-link resolves. It re-runs the *only* part of the search
+ * that can change between issuing a link and opening it: the opt-out registry.
+ * The predicate below is the same one `searchEvent` applies, deliberately in
+ * this file beside it — two copies of it would drift, and the way that drift
+ * shows up is somebody who asked not to be findable still being found through a
+ * link issued before they asked.
+ *
+ * No thresholds and no ranking, because both already happened. These faces were
+ * in the confident set when the link was made, and re-scoring them now would
+ * need the selfie, which was destroyed within a second of the search that
+ * produced them.
+ */
+export async function photosForFaces(
+  db: Db,
+  eventId: string,
+  faceIds: string[],
+): Promise<MatchedPhoto[]> {
+  if (faceIds.length === 0) return [];
+
+  const { rows } = await db.query<{
+    face_id: string;
+    photo_id: string;
+    preview_key: string | null;
+    thumb_key: string | null;
+    width: number | null;
+    height: number | null;
+    taken_at: string | null;
+  }>(
+    `
+    select f.id as face_id, f.photo_id,
+           p.preview_key, p.thumb_key, p.width, p.height, p.taken_at
+      from faces f
+      join photos p on p.id = f.photo_id
+     where f.id = any($1::uuid[])
+       and f.event_id = $2
+       and p.status = 'done'
+       and not exists (
+         select 1 from exclusions x
+          where x.event_id = f.event_id
+            and (x.embedding <=> f.embedding) < $3
+       )
+     order by p.taken_at nulls last, p.id
+    `,
+    [faceIds, eventId, EXCLUSION_RADIUS],
+  );
+
+  const photos: MatchedPhoto[] = rows.map((row) => ({
+    photoId: row.photo_id,
+    faceId: row.face_id,
+    previewKey: row.preview_key,
+    thumbKey: row.thumb_key,
+    previewUrl: null,
+    thumbUrl: null,
+    width: row.width,
+    height: row.height,
+    takenAt: row.taken_at,
+    // The scores are not re-derivable and are not shown on this page. Reporting
+    // a made-up one would be worse than reporting none.
+    score: 0,
+    rankScore: 0,
+    bucket: "confident" as const,
+    faceMatches: 1,
+  }));
+
+  const signed = await signUrls({
+    confident: photos,
+    maybe: [],
+    topScore: null,
+    facesConsidered: photos.length,
+  });
+  return signed.confident;
 }
 
 /**
@@ -196,6 +282,7 @@ export function rank(rows: FaceRow[], thresholds: Thresholds): SearchOutcome {
 
     const photo: MatchedPhoto = {
       photoId: row.photo_id,
+      faceId: row.face_id,
       rankScore: score + prominenceBoost(row),
       previewKey: row.preview_key,
       thumbKey: row.thumb_key,

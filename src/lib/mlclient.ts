@@ -38,6 +38,22 @@ export class MlServiceUnavailable extends Error {
   }
 }
 
+/**
+ * The service is up, and still loading its model.
+ *
+ * Every host that sleeps an idle container — which is every free tier — makes
+ * the first search after a quiet spell wait the better part of a minute while
+ * buffalo_l loads. From the attendee's side that is indistinguishable from a
+ * broken product, so it is worth the extra round trip to be able to say which
+ * of the two it is.
+ */
+export class MlServiceWarming extends Error {
+  constructor() {
+    super("the face matching service is still loading its model");
+    this.name = "MlServiceWarming";
+  }
+}
+
 export async function enroll(frames: Blob[]): Promise<EnrollmentResult> {
   const body = new FormData();
   for (const [i, frame] of frames.entries()) {
@@ -50,12 +66,15 @@ export async function enroll(frames: Blob[]): Promise<EnrollmentResult> {
       method: "POST",
       headers: { authorization: `Bearer ${env.mlServiceToken}` },
       body,
-      // A crowded selfie still returns in a couple of seconds; anything longer
-      // is a stuck service, and the attendee is standing at an event waiting.
-      signal: AbortSignal.timeout(30_000),
+      // Long enough to sit through a cold start rather than failing halfway
+      // into one and making the attendee start again. A warm service answers a
+      // crowded selfie in a couple of seconds; this ceiling is for the model
+      // load, not for the work.
+      signal: AbortSignal.timeout(90_000),
     });
   } catch (cause) {
-    throw new MlServiceUnavailable(cause);
+    // Only now, on the failure path, is it worth asking which failure this is.
+    throw (await warming()) ? new MlServiceWarming() : new MlServiceUnavailable(cause);
   }
 
   if (response.status === 401) {
@@ -96,15 +115,43 @@ export async function enroll(frames: Blob[]): Promise<EnrollmentResult> {
   };
 }
 
-export async function mlServiceHealthy(timeoutMs = 2000): Promise<boolean> {
+export interface MlHealth {
+  ok: boolean;
+  engine: string;
+  modelLoaded: boolean;
+}
+
+export async function mlHealth(timeoutMs = 3000): Promise<MlHealth | null> {
   try {
     const response = await fetch(`${env.mlServiceUrl}/health`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
-    return response.ok;
+    if (!response.ok) return null;
+    const body = (await response.json()) as {
+      ok?: boolean;
+      engine?: string;
+      model_loaded?: boolean;
+    };
+    return {
+      ok: body.ok !== false,
+      engine: body.engine ?? "unknown",
+      // Absent on an older container. Treating that as loaded is the right
+      // default: it is what the old blocking /health meant when it answered.
+      modelLoaded: body.model_loaded ?? true,
+    };
   } catch {
-    return false;
+    return null;
   }
+}
+
+export async function mlServiceHealthy(timeoutMs = 2000): Promise<boolean> {
+  return (await mlHealth(timeoutMs)) !== null;
+}
+
+/** Up, but not ready yet. */
+async function warming(): Promise<boolean> {
+  const health = await mlHealth();
+  return health !== null && !health.modelLoaded;
 }
 
 /** pgvector's text input format. */

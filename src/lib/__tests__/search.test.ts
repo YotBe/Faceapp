@@ -9,6 +9,7 @@ const { bucketOf } = await import("../thresholds");
 const T = { tHigh: 0.5, tLow: 0.4, trusted: true, source: "test" };
 
 interface Row {
+  face_id: string;
   photo_id: string;
   similarity: number;
   quality_tier: number;
@@ -21,8 +22,12 @@ interface Row {
   taken_at: string | null;
 }
 
+let faceCounter = 0;
+
 function face(over: Partial<Row> & { photo_id: string; similarity: number }): Row {
+  faceCounter += 1;
   return {
+    face_id: `f${faceCounter}`,
     quality_tier: 2,
     face_px: 120,
     bbox: { x: 400, y: 300, w: 120, h: 140 },
@@ -142,4 +147,16 @@ test("bucket boundaries are inclusive at the threshold", () => {
   expect(bucketOf(0.4999, 2, T)).toBe("maybe");
   expect(bucketOf(0.4, 2, T)).toBe("maybe");
   expect(bucketOf(0.3999, 2, T)).toBe("reject");
+});
+
+test("the winning face is the one carried forward, not just its score", () => {
+  // A keep-link re-checks this face against the opt-out registry when it is
+  // opened. Carrying the wrong one would check somebody else's opt-out.
+  const winner = face({ photo_id: "p9", similarity: 0.71 });
+  const loser = face({ photo_id: "p9", similarity: 0.55 });
+
+  const out = rank([loser, winner], T);
+
+  expect(out.confident[0]?.faceId).toBe(winner.face_id);
+  expect(out.confident[0]?.faceMatches).toBe(2);
 });

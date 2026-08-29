@@ -154,6 +154,34 @@ try {
     "only the confident set is offered for download",
   );
 
+  // The keep-link. Everything about it is server-side and depends on real
+  // storage and a real album, so this is the only place it can be tested: the
+  // token has to resolve to the same photographs the search just returned.
+  const keepLink = await mobile.locator("input[readonly]").first().inputValue();
+  check(keepLink.includes(`/e/${SLUG}/photos?k=`), "a keep-link is offered for the results");
+  await shot(mobile, "10-attendee-keeplink");
+
+  await mobile.goto(keepLink, { waitUntil: "networkidle" });
+  const kept = await mobile.locator("img").count();
+  check(
+    kept === EXPECTED_MATCHES,
+    `the keep-link reopens the same ${EXPECTED_MATCHES} photographs (got ${kept})`,
+  );
+  await shot(mobile, "11-attendee-kept", { fullPage: true });
+
+  // One character changed, in the middle of the payload rather than at either
+  // end where base64 padding could absorb it. The signature is what stops
+  // somebody editing a link they were legitimately given into one for a
+  // stranger's photographs.
+  const at = keepLink.indexOf("?k=") + 10;
+  const tampered =
+    keepLink.slice(0, at) + (keepLink[at] === "A" ? "B" : "A") + keepLink.slice(at + 1);
+  await mobile.goto(tampered, { waitUntil: "networkidle" });
+  check(
+    (await mobile.getByText("This link no longer works").count()) > 0,
+    "an edited keep-link is refused",
+  );
+
   await mobile.goto(`${BASE}/e/${SLUG}/opt-out`, { waitUntil: "networkidle" });
   check(
     (await mobile.getByRole("heading", { name: "Remove yourself" }).count()) > 0,

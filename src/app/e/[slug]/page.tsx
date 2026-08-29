@@ -63,7 +63,7 @@ export default async function AttendeePage({
           </p>
         </div>
       ) : (
-        <SelfieCapture slug={slug} eventName={event.name} />
+        <SelfieCapture slug={slug} eventName={event.name} warnedAlready={event.is_demo} />
       )}
 
       <footer className="mt-10 space-y-2 border-t border-[var(--color-line)] pt-5 text-xs leading-relaxed text-[var(--color-muted)]">

@@ -42,12 +42,65 @@ interface SearchResponse {
   maybe: Match[];
   warnings: string[];
   thresholdsTrusted: boolean;
+  /**
+   * A signed URL that reopens this result set later. Null when nothing matched.
+   *
+   * Nothing is stored behind it — the photograph ids travel inside the token —
+   * so it expires on its own and stops working when the album is deleted.
+   */
+  keepLink: string | null;
+  /** How many photographs the link carries, which can be fewer than matched. */
+  keepLinkPhotos: number;
   selfieDeleted: { elapsedMs: number; withinSla: boolean };
+}
+
+/**
+ * Attendee-facing copy for the failures that carry a code rather than a
+ * sentence.
+ *
+ * The route answers other services as well as this page, so its errors are
+ * codes and its `detail` is written for whoever is running the deployment.
+ * Neither belongs in front of somebody standing at an event: "search_unavailable"
+ * tells them nothing, and the threshold explanation tells them about a decision
+ * that is not theirs to make.
+ */
+function attendeeMessage(data: { error?: string; detail?: string }): string {
+  switch (data.error) {
+    case "warming_up":
+      return (
+        "The photo matching is starting up — this takes about a minute after " +
+        "a quiet spell. Try again shortly."
+      );
+    case "search_unavailable":
+      return (
+        "Search is turned off for this album. The organiser has been told why."
+      );
+    default:
+      return data.error ?? "Something went wrong.";
+  }
 }
 
 type Phase = "intro" | "starting" | "ready" | "capturing" | "searching" | "results" | "error";
 
-export function SelfieCapture({ slug, eventName }: { slug: string; eventName: string }) {
+export function SelfieCapture({
+  slug,
+  eventName,
+  warnedAlready = false,
+}: {
+  slug: string;
+  eventName: string;
+  /**
+   * Whether the page above has already shown the untrusted-thresholds banner.
+   *
+   * It does for a demo event, from the database. This component shows the same
+   * banner from the *search response*, which is the load-bearing copy — it
+   * cannot be forgotten by a deployment that renders the page differently. Both
+   * at once is just two identical yellow boxes, so the response-driven one
+   * stands down when the page has already said it, and still appears when the
+   * page has not.
+   */
+  warnedAlready?: boolean;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -193,7 +246,7 @@ export function SelfieCapture({ slug, eventName }: { slug: string; eventName: st
 
       if (!response.ok) {
         setPhase("error");
-        setMessage(data.error ?? "Something went wrong.");
+        setMessage(attendeeMessage(data));
         setHints(data.warnings ?? []);
         return;
       }
@@ -219,7 +272,7 @@ export function SelfieCapture({ slug, eventName }: { slug: string; eventName: st
     const total = results.confident.length + results.maybe.length;
     return (
       <div className="space-y-5">
-        {!results.thresholdsTrusted ? <UntrustedThresholdBanner /> : null}
+        {!results.thresholdsTrusted && !warnedAlready ? <UntrustedThresholdBanner /> : null}
 
         <div>
           <h2 className="text-lg font-semibold">
@@ -274,6 +327,14 @@ export function SelfieCapture({ slug, eventName }: { slug: string; eventName: st
               </>
             ) : null}
           </div>
+        ) : null}
+
+        {results.keepLink ? (
+          <KeepLink
+            href={results.keepLink}
+            carried={results.keepLinkPhotos}
+            matched={results.confident.length}
+          />
         ) : null}
 
         {results.warnings.length > 0 ? (
@@ -416,6 +477,76 @@ export function SelfieCapture({ slug, eventName }: { slug: string; eventName: st
           </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * "Keep this link."
+ *
+ * Without it the results exist only in this open tab, and everybody closes the
+ * tab. Searching again is not much of an answer either: the rate limit is three
+ * an hour per device, deliberately, so a second look is not always available.
+ */
+function KeepLink({
+  href,
+  carried,
+  matched,
+}: {
+  href: string;
+  carried: number;
+  matched: number;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  // The route returns a relative path on purpose — it cannot know the host the
+  // browser used, and guessing it behind a proxy is how the login redirect broke
+  // once already. So the absolute URL is assembled here, in the one place that
+  // does know, by writing it straight into the field rather than through state:
+  // it is display text, and re-rendering the tree for it would be theatre.
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.value = new URL(href, window.location.origin).toString();
+    }
+  }, [href]);
+
+  return (
+    <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
+      <p className="text-sm font-medium">Keep this link</p>
+      <p className="mt-1 text-xs text-[var(--color-muted)]">
+        It reopens these photographs for a week without searching again.
+        {carried < matched ? ` It carries the first ${carried} of them.` : ""}{" "}
+        Anyone you send it to can see them, so treat it like the photographs
+        themselves.
+      </p>
+      <div className="mt-3 flex gap-2">
+        <input
+          ref={inputRef}
+          readOnly
+          defaultValue={href}
+          onFocus={(event) => event.currentTarget.select()}
+          className="min-w-0 flex-1 rounded-lg border border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 font-mono text-xs"
+        />
+        <button
+          type="button"
+          className={secondaryButtonClass}
+          onClick={async () => {
+            const value = inputRef.current?.value ?? href;
+            try {
+              await navigator.clipboard.writeText(value);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            } catch {
+              // No clipboard permission, or an insecure origin. The field is
+              // selectable, which is the fallback everyone already knows.
+              inputRef.current?.select();
+            }
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -3,7 +3,13 @@ import { NextResponse } from "next/server";
 import { hashIp } from "@/lib/auth";
 import { asService, serviceTransaction } from "@/lib/db";
 import { env } from "@/lib/env";
-import { EnrollmentFailed, MlServiceUnavailable, enroll } from "@/lib/mlclient";
+import {
+  EnrollmentFailed,
+  MlServiceUnavailable,
+  MlServiceWarming,
+  enroll,
+} from "@/lib/mlclient";
+import { MAX_LINKED_PHOTOS, signResultLink } from "@/lib/resultlink";
 import { searchEvent } from "@/lib/search";
 import { UntunedThresholdError, loadThresholds } from "@/lib/thresholds";
 
@@ -31,6 +37,9 @@ export const dynamic = "force-dynamic";
 
 const MAX_FRAMES = 5;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/** Long enough to be useful the morning after; short enough to go stale. */
+const KEEP_LINK_TTL_SECONDS = 7 * 24 * 3600;
 
 function clientIp(request: Request): string {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -72,8 +81,10 @@ export async function POST(request: Request) {
       is_demo: boolean;
       is_youth_event: boolean;
       youth_attestation_at: string | null;
+      delete_after: string;
     }>(
-      `select id, name, status, is_demo, is_youth_event, youth_attestation_at
+      `select id, name, status, is_demo, is_youth_event, youth_attestation_at,
+              delete_after
          from events where slug = $1 and delete_after > now()`,
       [slug],
     );
@@ -163,6 +174,25 @@ export async function POST(request: Request) {
         { status: 422 },
       );
     }
+    if (error instanceof MlServiceWarming) {
+      // Not an error the attendee caused and not one they can fix, but it does
+      // resolve itself — so tell them that rather than showing them a failure.
+      await logSearch({
+        eventId: event.id,
+        ipHash,
+        outcome: "error",
+        durationMs: Date.now() - startedAt,
+      });
+      return NextResponse.json(
+        {
+          error: "warming_up",
+          detail:
+            "The face matching service is starting up. This takes about a " +
+            "minute the first time after a quiet spell — try again shortly.",
+        },
+        { status: 503, headers: { "retry-after": "60" } },
+      );
+    }
     if (error instanceof MlServiceUnavailable) {
       await logSearch({
         eventId: event.id,
@@ -224,6 +254,31 @@ export async function POST(request: Request) {
     // rather than only in a config file so it cannot be forgotten by a
     // deployment that builds the UI separately.
     thresholdsTrusted: thresholds.trusted,
+    // A link that survives closing the tab. The photo ids travel inside a signed
+    // token rather than a row: nothing is stored that joins this person to these
+    // photographs, and the link cannot outlive the album it points into. See
+    // src/lib/resultlink.ts.
+    //
+    // Confident matches only. A "maybe" is a borderline match that a person has
+    // to look at before it goes anywhere, and a link is exactly the kind of
+    // thing that gets forwarded without being looked at.
+    // How many of the confident matches the link actually carries. The client
+    // needs this to say "the first 60" honestly rather than duplicating the cap
+    // and drifting from it.
+    keepLinkPhotos: Math.min(outcome.confident.length, MAX_LINKED_PHOTOS),
+    keepLink: outcome.confident.length
+      ? `/e/${slug}/photos?k=${signResultLink(
+          event.id,
+          outcome.confident.map((match) => match.faceId),
+          // Never longer than the album has left. The link would stop working
+          // on the retention date anyway — this is so it does not spend a week
+          // claiming otherwise.
+          Math.min(
+            KEEP_LINK_TTL_SECONDS,
+            Math.floor((new Date(event.delete_after).getTime() - Date.now()) / 1000),
+          ),
+        )}`
+      : null,
     selfieDeleted: { embeddingLength, elapsedMs, withinSla: elapsedMs <= 60_000 },
   });
 }

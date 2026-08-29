@@ -28,7 +28,9 @@ import hmac
 import io
 import logging
 import os
+import threading
 import time
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 import numpy as np
@@ -42,10 +44,39 @@ from faceapp_ml.quality import QualityPolicy
 
 log = logging.getLogger("faceapp.service")
 
-app = FastAPI(title="faceapp enrollment", version="1.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Start loading the model the moment the process starts.
+
+    buffalo_l takes the better part of a minute to load on a shared vCPU, and
+    without this that minute is paid by whoever searches first. On a host that
+    sleeps idle containers — which is every free tier — that is an attendee
+    standing at an event watching a spinner, and it reads as a broken product
+    rather than a cold start.
+
+    In a thread, and not awaited: the process must start serving /health
+    immediately so the platform's health check does not time out and kill the
+    container while it is doing exactly what it was asked to do.
+    """
+    threading.Thread(target=_warm, name="warm-engine", daemon=True).start()
+    yield
+
+
+def _warm() -> None:
+    try:
+        engine()
+        log.info("face engine ready")
+    except Exception:  # pragma: no cover - logged, and retried on first request
+        log.exception("face engine failed to preload; the first request will retry")
+
+
+app = FastAPI(title="faceapp enrollment", version="1.0", lifespan=lifespan)
 
 _engine = None
 _policy: QualityPolicy | None = None
+# Loading takes ~40s and several requests can arrive during it. Without this
+# they each load their own copy of a 400MB model.
+_engine_lock = threading.Lock()
 
 
 def _token() -> str:
@@ -95,11 +126,15 @@ MAX_FRAME_BYTES = 8 * 1024 * 1024
 def engine():
     global _engine, _policy
     if _engine is None:
-        from faceapp_ml.engine import InsightFaceEngine
+        with _engine_lock:
+            if _engine is None:
+                from faceapp_ml.engine import InsightFaceEngine
 
-        log.info("loading face engine")
-        _engine = InsightFaceEngine()
-        _policy = QualityPolicy.load()
+                log.info("loading face engine")
+                loaded = InsightFaceEngine()
+                _policy = QualityPolicy.load()
+                # Published last, so no other thread can see a half-built engine.
+                _engine = loaded
     return _engine
 
 
@@ -122,6 +157,10 @@ class Enrollment(BaseModel):
 class HealthResponse(BaseModel):
     ok: bool
     engine: str
+    # False while the model is still loading. The process is up and answering
+    # either way; this is the difference between "warming up" and "broken",
+    # which look identical from a request that timed out.
+    model_loaded: bool = False
     thresholds_are_this_service_business: bool = False
 
 
@@ -129,8 +168,35 @@ class HealthResponse(BaseModel):
 def health() -> HealthResponse:
     """Unauthenticated, because a container host's health check cannot hold a
     token — but it does no work and reveals nothing beyond which model is
-    loaded, which is public information in the repository anyway."""
-    return HealthResponse(ok=True, engine=engine().name)
+    configured, which is public information in the repository anyway.
+
+    Deliberately does not force the model to load. It used to, which made the
+    health check itself take a minute and meant a caller could not tell a
+    warming container from a dead one.
+    """
+    return HealthResponse(
+        ok=True,
+        engine=_engine_name(),
+        model_loaded=_engine is not None,
+    )
+
+
+def _engine_name() -> str:
+    """The engine's name without loading it, and without requiring it.
+
+    `faceapp_ml.engine` imports InsightFaceEngine lazily so the core package
+    stays usable without onnxruntime, and health has to keep that property: a
+    container that cannot import the model should say so through this endpoint
+    rather than by failing to answer it.
+    """
+    if _engine is not None:
+        return _engine.name
+    try:
+        from faceapp_ml.engine import InsightFaceEngine
+
+        return InsightFaceEngine.name
+    except ImportError:
+        return "unavailable — the insightface extra is not installed"
 
 
 def _decode(data: bytes) -> np.ndarray:

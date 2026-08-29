@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { asService } from "./db";
 import { configProblems, env, storageProblems } from "./env";
-import { mlServiceHealthy } from "./mlclient";
+import { mlHealth } from "./mlclient";
 import { BUCKET, storage } from "./storage";
 import { UntunedThresholdError, loadThresholds } from "./thresholds";
 
@@ -148,8 +148,8 @@ async function checkMlService(): Promise<Check[]> {
     ];
   }
 
-  const reachable = await mlServiceHealthy(TIMEOUT_MS).catch(() => false);
-  if (!reachable) {
+  const health = await mlHealth(TIMEOUT_MS).catch(() => null);
+  if (!health) {
     return [
       {
         name: "Face matching service",
@@ -163,7 +163,23 @@ async function checkMlService(): Promise<Check[]> {
   }
 
   const checks: Check[] = [
-    { name: "Face matching service", state: "pass", detail: `${env.mlServiceUrl} is up` },
+    health.modelLoaded
+      ? {
+          name: "Face matching service",
+          state: "pass",
+          detail: `${env.mlServiceUrl} is up, ${health.engine} loaded`,
+        }
+      : {
+          // Up and answering, model not in memory yet. A warning and not a
+          // failure: it fixes itself, and calling it a failure would send
+          // somebody looking for a problem that is about to stop existing.
+          name: "Face matching service",
+          state: "warn",
+          detail: `${env.mlServiceUrl} is up; ${health.engine} is still loading`,
+          fix:
+            "Loading takes around a minute from a cold container. Searches during " +
+            "it wait rather than fail. Re-check shortly.",
+        },
   ];
 
   if (!process.env["ML_SERVICE_TOKEN"]) {
