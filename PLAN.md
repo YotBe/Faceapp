@@ -228,6 +228,7 @@ type Extraction = {
 +--------------------------------+
 ```
 
+- As built (see `DECISIONS.md`, following the owner's concept video): a status pill with a waveform at the top, the live sentence with terms highlighted, the newest card as a large "Heard just now" card, "How it fits" under it, earlier cards compressed below, and Pause / End at the bottom. Ending a session opens a light "cheat sheet" with Share.
 - Newest card on top. Older cards compress to header + one-liner.
 - "More" expands a deeper explanation generated on demand (separate LLM call with the transcript context), plus sources.
 - **Bidi:** every text node gets `dir="auto"`; cards are laid out LTR or RTL according to `explainLanguage`; mixed Hebrew/English strings must render correctly (test with fixtures).

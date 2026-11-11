@@ -4,8 +4,8 @@
 //   npm run spike:s3                 # all fixtures, both latency configs
 //   npm run spike:s3 -- canon-clean  # one fixture
 import Anthropic from '@anthropic-ai/sdk';
-import { CONFIGS, FAST_MODEL, runExtraction, score } from './shared/extraction.js';
-import { FIXTURES } from './shared/fixtures.js';
+import { CONFIGS, FAST_MODEL, runExtraction, score } from '../src/llm/extraction.js';
+import { FIXTURES } from '../src/llm/fixtures.js';
 
 const MODEL = process.env.GLOSS_FAST_MODEL ?? FAST_MODEL;
 const client = new Anthropic();
