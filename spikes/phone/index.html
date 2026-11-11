@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e0f11" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="robots" content="noindex" />
+    <title>Gloss check</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Gloss — phone check</h1>
+      <p class="muted">Three checks before the real app gets built. Put the phone where it would sit in a call.</p>
+
+      <section>
+        <h2>Keys</h2>
+        <p class="muted">Saved on this phone only. Never sent anywhere except to Soniox and Anthropic.</p>
+        <label>Soniox API key <input id="sonioxKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" /></label>
+        <label>Anthropic API key <input id="anthropicKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" /></label>
+        <button id="saveKeys">Save keys</button> <span id="keysState" class="muted"></span>
+      </section>
+
+      <section>
+        <h2>1 · Microphone</h2>
+        <p class="muted">Play a video on your laptop speakers, then tap Start. The bar should move with the sound.</p>
+        <button id="micStart">Start microphone</button>
+        <button id="micRecord" disabled>Record 5 s</button>
+        <div class="meter"><div id="micBar"></div></div>
+        <div id="micVal" class="mono muted">—</div>
+        <div id="micWarn" class="warn"></div>
+        <audio id="playback" controls hidden></audio>
+      </section>
+
+      <section>
+        <h2>2 · Live transcript</h2>
+        <p class="muted">Say, in Hebrew and English mixed, something like the example below. Try once with the box unticked and once ticked.</p>
+        <p class="example" dir="auto">על ה-dev board של SiMa, המודליקס החדש, צריך להריץ RF-DETR Nano</p>
+        <label class="check"><input id="useContext" type="checkbox" checked /> Give Soniox the jargon list</label>
+        <label class="check"><input id="liveCards" type="checkbox" checked /> Make cards from what I say</label>
+        <button id="sttStart" disabled>Start transcribing</button>
+        <button id="sttStop" disabled>Stop</button>
+        <div id="sttState" class="muted"></div>
+        <div id="transcript" class="transcript" dir="auto"></div>
+        <div id="cards"></div>
+      </section>
+
+      <section>
+        <h2>3 · Card speed</h2>
+        <p class="muted">Runs six prepared sentences through Claude and times how fast a card could appear.</p>
+        <button id="extractRun">Run</button>
+        <div id="extractOut"></div>
+      </section>
+
+      <section>
+        <h2>Log</h2>
+        <button id="copyLog">Copy log</button> <span id="copied" class="muted"></span>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

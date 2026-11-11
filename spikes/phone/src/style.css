@@ -1,0 +1,34 @@
+:root { color-scheme: dark; --bg: #0e0f11; --panel: #17191d; --line: #2a2d33; --text: #f1f2f4; --muted: #9aa0aa; --accent: #5ad19a; --warn: #ffb020; --bad: #ff6b6b; }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.45 -apple-system, system-ui, sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)); }
+h1 { font-size: 24px; margin: 0 0 4px; }
+h2 { font-size: 19px; margin: 0 0 6px; }
+p { margin: 0 0 10px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 14px 0; }
+.muted { color: var(--muted); font-size: 15px; }
+.mono { font: 13px ui-monospace, Menlo, monospace; }
+label { display: block; font-size: 15px; color: var(--muted); margin: 8px 0; }
+label.check { display: flex; gap: 10px; align-items: center; color: var(--text); font-size: 16px; min-height: 36px; }
+label.check input { width: 22px; height: 22px; }
+input[type='password'] { display: block; width: 100%; margin-top: 4px; padding: 12px; font-size: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+button { font: inherit; font-weight: 600; min-height: 46px; padding: 0 16px; margin: 6px 6px 6px 0; color: #06140d; background: var(--accent); border: 0; border-radius: 10px; }
+button:disabled { opacity: 0.35; }
+.meter { height: 26px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: 10px 0 6px; }
+#micBar { height: 100%; width: 0; background: var(--accent); transition: width 80ms linear; }
+.warn { color: var(--warn); font-weight: 600; white-space: pre-wrap; }
+.bad { color: var(--bad); }
+.example { background: var(--bg); border-radius: 8px; padding: 10px; font-size: 18px; }
+.transcript { min-height: 72px; font-size: 20px; line-height: 1.5; margin: 10px 0; overflow-wrap: anywhere; }
+.transcript .interim { color: var(--muted); }
+.transcript .end { color: var(--accent); font-size: 13px; }
+.card { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0; }
+.card .term { font-size: 24px; font-weight: 700; }
+.card .meta { color: var(--muted); font-size: 13px; }
+.card .one { font-size: 19px; margin: 4px 0; }
+.card ul { margin: 6px 0 0; padding-inline-start: 20px; }
+.card.rel { border-color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+td, th { text-align: start; padding: 5px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+pre { font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--bg); padding: 10px; border-radius: 8px; margin: 8px 0 0; }

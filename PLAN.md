@@ -2,24 +2,26 @@
 
 **Build plan for Claude Code.** Working name "Gloss" (rename freely).
 
+> **Revised 2026-11-11 at the owner's request: Gloss runs on his iPhone (15 Pro), as a web app in Safari, not as a desktop Electron app.** The phone sits on the desk and listens through its own microphone. Sections 0-2, 3.7, 4, 5.1, 5.2, 6.1, 6.3, 7, 8, 10, 11, 12 and 13 changed; the pipeline (5.3-5.7), the card design and the evaluation approach did not. The original desktop plan is in git history (commit `ad5f5fc`). `DECISIONS.md` records why.
+
 ---
 
 ## 0. How to use this file (Claude Code: read this first)
 
 1. Read the whole file before writing code.
 2. Work phase by phase (section 10). Each phase ends in something runnable. **Stop at the end of every phase**, print the demo checklist, and wait for the owner to confirm before continuing.
-3. **Do not trust your memory for third-party APIs.** Before writing integration code, fetch the current docs for: Soniox real-time WebSocket API, Electron `desktopCapturer` / `session.setDisplayMediaRequestHandler`, and the Anthropic TypeScript SDK (streaming, tool use / structured output, prompt caching, web search tool). Confirm model IDs, parameter names and limits there. Where this plan and the docs disagree, the docs win; note the difference in `DECISIONS.md`.
+3. **Do not trust your memory for third-party APIs.** Before writing integration code, fetch the current docs for: Soniox real-time WebSocket API, iOS Safari audio capture (`getUserMedia`, `AudioWorklet`, Screen Wake Lock), and the Anthropic TypeScript SDK (streaming, tool use / structured output, prompt caching, web search tool). Confirm model IDs, parameter names and limits there. Where this plan and the docs disagree, the docs win; note the difference in `DECISIONS.md`.
 4. Commit at the end of each phase with a clear message. Keep `DECISIONS.md` (choices made + why) and `README.md` (how to run) current.
 5. Ask the owner only when blocked on something only he has (API keys, OS permission prompts, a product choice not covered here). Otherwise decide, record it, move on.
-6. No scope creep: no backend server, no user accounts, no vector DB, no meeting bot that joins calls. See section 12.
+6. No scope creep: no backend server, no user accounts, no vector DB, no meeting bot that joins calls, no native iOS app. See section 12.
 
 ---
 
 ## 1. The product in one paragraph
 
-The owner is a Field Applications Engineer at an edge-AI company. In customer calls (Zoom / Teams) people throw around product names, model names, chips and acronyms he may not know yet. Gloss runs on his machine, listens to the call (his mic + the system audio), transcribes live, and on his **second screen** shows a calm stack of cards: what each technical term is, why it matters in this conversation, and **how the terms just mentioned fit together**. Nothing joins the meeting. Nobody else sees it.
+The owner is a Field Applications Engineer at an edge-AI company. In customer calls (Zoom / Teams) people throw around product names, model names, chips and acronyms he may not know yet. Gloss runs on his **iPhone**, propped on a stand next to the laptop (or on the table in an in-person meeting). It listens to the room through the phone's microphone, transcribes live, and shows a calm stack of cards: what each technical term is, why it matters in this conversation, and **how the terms just mentioned fit together**. Nothing joins the meeting. Nobody else sees it.
 
-Canonical example. Customer says (Hebrew with English terms): "on the SiMa dev board, the new Modalix, you need to run RF-DETR Nano". Within ~2 seconds the second screen shows:
+Canonical example. Customer says (Hebrew with English terms): "on the SiMa dev board, the new Modalix, you need to run RF-DETR Nano". Within ~2 seconds the phone shows:
 
 - **SiMa.ai Modalix** — what it is, in one line, then 3 bullets.
 - **RF-DETR Nano** — what it is, in one line, then 3 bullets.
@@ -28,8 +30,10 @@ Canonical example. Customer says (Hebrew with English terms): "on the SiMa dev b
 ## 2. Assumptions (change in `DECISIONS.md` if wrong)
 
 - **Languages:** Hebrew conversation with English technical terms mixed in, sometimes fully English. Code-switching mid-sentence is the normal case, not an edge case.
-- **OS:** unknown. Build cross-platform Electron; develop and verify on whatever machine this runs on first, keep the others working by design (section 5.1).
-- **Scope:** single-user desktop tool first, built cleanly enough to productize later. API keys are the owner's own.
+- **Device:** iPhone 15 Pro, current iOS, Safari. Built as a static web app (installable to the Home Screen), so it also runs in any modern browser — which is how it is developed and tested.
+- **The phone must be able to hear the call.** The customer's voice has to come out of a speaker (laptop speakers, a conference speakerphone, or the room itself in an in-person meeting). **If he wears headphones, Gloss hears only him.** iOS does not let an app capture another app's call audio, so a call taken on the iPhone itself is not supported either.
+- **One audio stream.** There is no separate "me" / "them" channel. Speaker labels come from the STT provider's diarization and are best-effort.
+- **Scope:** single-user tool first, built cleanly enough to productize later. API keys are the owner's own, typed into the app once and kept on the phone.
 - **Keys needed from owner:** `SONIOX_API_KEY`, `ANTHROPIC_API_KEY`. Optional: `DEEPGRAM_API_KEY` (fallback STT).
 
 ## 3. Product principles (these decide every trade-off)
@@ -40,67 +44,65 @@ Canonical example. Customer says (Hebrew with English terms): "on the SiMa dev b
 4. **Never repeat.** A term is explained once per meeting; "I know this" suppresses it forever.
 5. **It learns.** Every meeting improves the local glossary, which improves both transcription and speed next time.
 6. **Honest.** Low-confidence guesses are visibly marked. Web-verified facts carry a source link. Never present a guess as fact.
-7. **Private by default.** No audio stored. Panel hidden from screen share. Clear on/off state.
+7. **Private by default.** No audio stored. Nothing leaves the phone except audio to the STT provider and text to the LLM provider. Clear on/off state.
 
 ## 4. Architecture
 
 ```
- mic ----------> AudioWorklet (16k PCM16) --\
-                                             >-- IPC --> main process
- system audio -> AudioWorklet (16k PCM16) --/              |
- (loopback)                                                 v
-                                             STT provider (Soniox WS) x2 streams
-                                             tokens {text, is_final, language, speaker}
-                                                            |
-                                                            v
-                                             Utterance assembler (per source: "me" / "them")
-                                                            |
-                              +-----------------------------+-----------------------+
-                              v                                                     v
-                 Stage A: local glossary matcher                  Stage B: LLM term extractor
-                 (fuzzy + Hebrew-phonetic aliases)                (fast model, streaming JSON)
-                 -> instant card from cache                       -> new cards + relations
-                              |                                                     |
-                              +---------------------> Card store <------------------+
-                                                         |    ^
-                                                         |    | Stage C: async grounding
-                                                         |    | (web search, bigger model)
-                                                         v    | -> verified facts + sources
-                                              Renderer (second-screen panel)
-                                                         |
-                                              SQLite: sessions, transcript, cards, glossary
+ iPhone mic -> AudioWorklet (16k PCM16, 100 ms frames)
+                    |
+                    v
+          STT provider (Soniox WebSocket, opened from the page)
+          tokens {text, is_final, language, speaker}
+                    |
+                    v
+          Utterance assembler (speaker label from diarization)
+                    |
+      +-------------+---------------------------+
+      v                                         v
+ Stage A: local glossary matcher     Stage B: LLM term extractor
+ (fuzzy + Hebrew-phonetic aliases)   (fast model, streaming JSON)
+ -> instant card from cache          -> new cards + relations
+      |                                         |
+      +------------> Card store <---------------+
+                        |    ^
+                        |    | Stage C: async grounding
+                        |    | (web search, bigger model)
+                        v    | -> verified facts + sources
+                  Card stack (the page)
+                        |
+          IndexedDB: sessions, transcript, cards, glossary
 ```
+
+Everything runs in the page. There is no server: the page is static files, and it talks straight to the Soniox and Anthropic APIs.
 
 **Stack**
 
-- Electron (latest stable) + electron-vite, TypeScript strict everywhere.
-- Renderer: React + Tailwind + Zustand.
-- Main: `ws` for STT sockets, `@anthropic-ai/sdk`, `better-sqlite3`, `zod` for all LLM/IPC payload validation.
-- Tests: Vitest (unit), Playwright for Electron (smoke), custom replay + eval harness (section 9).
-- Packaging: electron-builder.
+- Vite + TypeScript strict. React + Tailwind + Zustand for the app (the Phase 0 check page is plain TypeScript).
+- `@anthropic-ai/sdk` in the browser (`dangerouslyAllowBrowser`), native `WebSocket` for STT, `zod` for all LLM payload validation, IndexedDB (via `idb`) for storage.
+- Installable PWA: web app manifest + service worker for the app shell, so it opens full-screen from the Home Screen.
+- Hosting: static deploy on Vercel (HTTPS is required for microphone access).
+- Tests: Vitest (unit), Playwright with a fake microphone at iPhone viewport (smoke), custom replay + eval harness (section 9).
 
-Why Electron and not Tauri or a web app: Electron exposes system-audio loopback through `getDisplayMedia` on Windows and macOS without a virtual audio driver, and controls window placement and content protection. That is the riskiest part of the product, so pick the stack that makes it easiest.
+Why a web app and not a native iOS app: it needs no Mac, no Xcode, no Apple developer account and no App Store review; the owner opens a URL. Everything Gloss needs from the phone — microphone, keeping the screen awake, local storage — is available to Safari. What a native app would add (running with the screen locked or in the background) is not needed for a phone that sits on a stand showing cards.
 
-**Process boundaries**
+**Boundaries**
 
-- All secrets, network calls, DB access live in **main**. Renderer gets a typed, minimal `contextBridge` API. `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.
-- Audio capture must happen in a renderer (Web APIs). Use a hidden capture window or the panel renderer; send PCM frames to main over a `MessagePort` (transferable ArrayBuffers), not plain `ipcRenderer.send`.
+- Keys are entered by the owner on his own phone and stored in that browser only. They are never in the repository, the built files, or a URL. A strict Content-Security-Policy limits the page to its own scripts and to the two API hosts, so a key cannot be sent anywhere else.
+- No third-party scripts, analytics or fonts.
 
 ## 5. Pipeline, in detail
 
 ### 5.1 Audio capture
 
-Two independent sources, kept separate end to end (gives free "me" vs "them" attribution and better accuracy than a mix):
+One source: the phone's microphone.
 
-- **Mic:** `getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })`. Device selectable in settings.
-- **System audio:**
-  - **Windows / macOS:** in main, `session.setDisplayMediaRequestHandler((req, cb) => cb({ video: <first screen source>, audio: 'loopback' }))`; in renderer, `getDisplayMedia({ video: true, audio: true })`, then immediately stop the video track and keep the audio track.
-  - **macOS specifics (verify in Electron docs for the installed version):** macOS 14.2+ needs `NSAudioCaptureUsageDescription` in Info.plist; recent Electron uses the CoreAudio Tap API by default. Handle the permission prompt and show a clear in-app message if capture returns silence.
-  - **Linux:** loopback is not provided this way. Offer a device picker and document selecting the PulseAudio/PipeWire **monitor** source.
-  - **Universal fallback:** setting "system audio = any input device", so a virtual device (BlackHole, VB-Cable, monitor source) always works.
-- **Processing:** one `AudioWorkletProcessor` per source: downmix to mono, resample to 16 kHz, convert to PCM16 LE, emit ~100 ms frames. Compute RMS per frame for the level meters and for silence detection.
-- **Silent-track guard:** if the system stream has RMS == 0 for 5 s while a call is evidently active, surface "No system audio detected" with the fix for that OS. This is the classic failure mode; do not ship without it.
-- **Echo:** if he uses speakers, the mic hears the customer too. Mitigate with echo cancellation, recommend headphones in onboarding, and rely on term dedup so a doubled utterance never produces a doubled card.
+- **Capture:** `getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } })`. Gloss plays no sound, so there is nothing to cancel; gain control matters because the speaker is across a desk.
+- **iOS rules:** the `AudioContext` must be created inside a tap. Safari stops the microphone when the page is hidden or the screen locks, so hold a **Screen Wake Lock** while listening, re-acquire it on `visibilitychange`, and on return from the background restart capture and say so on screen.
+- **Processing:** one `AudioWorkletProcessor`: downmix to mono, resample to 16 kHz (iPhone hardware runs at 48 kHz), convert to PCM16 LE, emit ~100 ms frames. Compute RMS per frame for the level meter and for silence detection.
+- **Silent-input guard:** if RMS is exactly 0, or no frames arrive, for 5 s, show "Microphone is not delivering audio" with the fix (permission in Settings > Safari, another app holding the mic, a call in progress on the phone).
+- **Too-quiet guard:** if speech is consistently faint, say "Move the phone closer to the speaker". A phone far from a laptop speaker is the expected failure mode of this design, the way silent loopback was for the desktop one.
+- **Interruptions:** an incoming phone call or Siri takes the microphone. Detect the track ending or muting, show it, and resume when it returns.
 
 ### 5.2 Speech-to-text
 
@@ -108,7 +110,7 @@ Behind an interface so providers can be swapped:
 
 ```ts
 interface SttProvider {
-  start(opts: { source: 'me' | 'them'; languageHints: string[]; contextTerms: string[]; contextText?: string }): Promise<void>;
+  start(opts: { languageHints: string[]; contextTerms: string[]; contextText?: string }): Promise<void>;
   pushAudio(pcm16: ArrayBuffer): void;
   onTokens(cb: (t: SttToken[]) => void): void;   // { text, isFinal, language?, speaker?, startMs, endMs }
   onEndpoint(cb: () => void): void;
@@ -117,7 +119,7 @@ interface SttProvider {
 }
 ```
 
-- **Primary: Soniox real-time** (WebSocket). Reasons: real-time Hebrew, native Hebrew/English code-switching with per-token language tags, free-text/term **context** biasing for jargon, endpoint detection, very low cost. Config to verify in docs: latest real-time model id (v5 at time of writing), `language_hints: ["he","en"]`, `enable_language_identification: true`, `enable_endpoint_detection: true`, `context` built from glossary terms + the pre-meeting brief (section 6.5), raw PCM format fields, max session length and how to roll over.
+- **Primary: Soniox real-time** (WebSocket, opened directly from the page). Reasons: real-time Hebrew, native Hebrew/English code-switching with per-token language tags, free-text/term **context** biasing for jargon, endpoint detection, speaker diarization, very low cost. Verified config is in `DECISIONS.md`: model `stt-rt-v6`, key sent in the WebSocket protocols list, `language_hints: ["he","en"]`, `enable_language_identification`, `enable_endpoint_detection`, `enable_speaker_diarization`, `context` built from glossary terms + the pre-meeting brief (section 6.5), 300-minute stream cap.
 - **Fallback: Deepgram Nova-3** (Hebrew supported, keyterm prompting, mid-stream keyterm updates). Implement second, only after the primary works. Check whether its multilingual mode covers Hebrew or whether Hebrew is monolingual-only; that decides if it is a real fallback for mixed speech.
 - **Later, optional: local STT** (whisper.cpp with a Hebrew-tuned model) for confidential customers. Just keep the interface honest; do not build now.
 - **Robustness:** auto-reconnect with backoff, buffer up to 10 s of audio during reconnect, session rollover before the provider's max duration, keepalive during silence. Never crash the meeting UI because a socket died; show a small "reconnecting" state.
@@ -127,7 +129,7 @@ interface SttProvider {
 
 - Keep interim tokens only for the live ticker. Everything downstream uses **final** tokens.
 - An utterance closes on provider endpoint, or after 4 s of accumulated final text without endpoint (long monologues), whichever comes first.
-- Maintain a rolling window: last ~90 s of final transcript across both sources, labelled `me:` / `them:`, as LLM context.
+- Maintain a rolling window: last ~90 s of final transcript, labelled by diarized speaker (`S1:` / `S2:`), as LLM context. Let the owner tap a speaker label once to mark it "me"; until then no speaker is assumed to be him.
 
 ### 5.4 Stage A — instant glossary match (no LLM)
 
@@ -183,53 +185,61 @@ type Extraction = {
 ### 5.7 Card policy
 
 - Dedup by canonical (case/spacing-insensitive) per session. A re-mention bumps the existing card to the top with a brief highlight instead of creating a new one.
-- Rate limit: max 3 new cards per 20 s; overflow goes to a collapsed "more" row ranked by (unknown-to-owner likelihood, confidence, said-by-customer > said-by-me).
+- Rate limit: max 3 new cards per 20 s; overflow goes to a collapsed "more" row ranked by (unknown-to-owner likelihood, confidence, said by someone else > said by the speaker marked "me").
 - "I know this" -> add to `known_terms`, never shown again, also sent to the LLM as the suppress list.
 - Pin -> card stays in the pinned strip for the whole meeting.
 
-## 6. The second-screen panel (UI spec)
+## 6. The card screen (UI spec)
 
-### 6.1 Window
+### 6.1 Screen
 
-- Opens on the **non-primary display** (`screen.getAllDisplays()`), remembers bounds per display, falls back to primary.
-- `setContentProtection(true)` by default so the panel is excluded from screen sharing/recording. Setting to turn off.
-- Dark theme, high contrast, large type (term 28 px+, one-liner 20 px+). Designed to be read from 70 cm in peripheral vision. No animations beyond a 150 ms fade/slide for new cards.
+- Portrait iPhone on a stand, read from arm's length while talking. Dark theme, high contrast, large type (term 26 px+, one-liner 19 px+). No animations beyond a 150 ms fade/slide for new cards. Respect the safe areas (Dynamic Island, home indicator).
+- Opens full-screen from the Home Screen icon. The screen stays awake while listening and is allowed to sleep when paused.
+- Everything is reachable with one thumb: the controls sit at the bottom, cards fill the rest.
 
 ### 6.2 Layout
 
 ```
-+--------------------------------------------------------------+
-| ● Listening   me ▮▮▯  them ▮▮▮▯      00:14:32     ⏸  ⚙      |
-+--------------------------------------------------------------+
-| Pinned:  [SiMa Modalix] [RF-DETR Nano]                       |
-+--------------------------------------------------------------+
-| HOW IT FITS                                                  |
-| RF-DETR Nano on Modalix: <2 sentences> · Gotcha: <1 line>    |
-+--------------------------------------------------------------+
-| RF-DETR Nano                               model · ✓ verified|
-| <one-liner>                                                  |
-| • bullet  • bullet  • bullet                                 |
-| Why here: <1 sentence>            [Know it] [Pin] [More ▾]   |
-+--------------------------------------------------------------+
-| SiMa.ai Modalix                            board · ? unsure  |
-| ...                                                          |
-+--------------------------------------------------------------+
-| them: ...last two lines of live transcript...                |
-+--------------------------------------------------------------+
-| Ask about this meeting…                                  ⏎   |
-+--------------------------------------------------------------+
++--------------------------------+
+| ● Listening  ▮▮▮▯    00:14:32  |
++--------------------------------+
+| [SiMa Modalix] [RF-DETR Nano]  |  pinned
++--------------------------------+
+| HOW IT FITS                    |
+| RF-DETR Nano on Modalix:       |
+| <2 sentences>                  |
+| Gotcha: <1 line>               |
++--------------------------------+
+| RF-DETR Nano     model · ✓     |
+| <one-liner>                    |
+| • bullet                       |
+| • bullet                       |
+| • bullet                       |
+| Why here: <1 sentence>         |
+| [Know it]  [Pin]  [More ▾]     |
++--------------------------------+
+| SiMa.ai Modalix  board · ?     |
+| <one-liner>                    |
++--------------------------------+
+| S2: ...last line of transcript |
++--------------------------------+
+| [ ⏸ ]  [ What was that? ]  [⚙] |
+| Ask about this meeting…     ⏎  |
++--------------------------------+
 ```
 
 - Newest card on top. Older cards compress to header + one-liner.
 - "More" expands a deeper explanation generated on demand (separate LLM call with the transcript context), plus sources.
 - **Bidi:** every text node gets `dir="auto"`; cards are laid out LTR or RTL according to `explainLanguage`; mixed Hebrew/English strings must render correctly (test with fixtures).
 
-### 6.3 Global hotkeys (configurable)
+### 6.3 Controls
+
+Large touch targets in the bottom bar, usable without looking closely:
 
 - Pause/resume listening.
 - "What was that?" — re-run extraction on the last 30 s with a lower threshold (for when he heard a term and no card appeared).
-- Mark newest card as known.
-- Focus the Ask box.
+- On each card: Know it, Pin, More. Swiping a card away marks it known.
+- The Ask box.
 
 ### 6.4 Ask box
 
@@ -247,61 +257,66 @@ Skippable: "Start without brief" is one click.
 
 ### 6.6 After the meeting
 
-- Session saved locally: transcript (with me/them and timestamps), cards, relations.
+- Session saved locally: transcript (with speaker labels and timestamps), cards, relations.
 - "Review" screen: terms learned this meeting, each with keep / edit / delete / mark-known; one click exports a Markdown summary (terms + explanations + sources + optional transcript).
 - Glossary screen: search, edit, add aliases, import/export JSON.
 
 ## 7. Data
 
-SQLite (`better-sqlite3`) in the app's userData dir.
+IndexedDB in the browser, one object store per table:
 
-- `glossary(id, canonical, kind, one_liner, bullets_json, long_md, sources_json, verified_at, aliases_json, created_at, updated_at)`
+- `glossary(id, canonical, kind, one_liner, bullets, long_md, sources, verified_at, aliases, created_at, updated_at)`
 - `known_terms(canonical, added_at)`
-- `sessions(id, title, brief, started_at, ended_at, stats_json)`
-- `utterances(id, session_id, source, text, lang, start_ms, end_ms)`
-- `cards(id, session_id, canonical, payload_json, first_seen_ms, pinned, grounded)`
-- `relations(id, session_id, terms_json, how, gotcha, at_ms)`
+- `sessions(id, title, brief, started_at, ended_at, stats)`
+- `utterances(id, session_id, speaker, text, lang, start_ms, end_ms)`
+- `cards(id, session_id, canonical, payload, first_seen_ms, pinned, grounded)`
+- `relations(id, session_id, terms, how, gotcha, at_ms)`
 - `settings(key, value)`
 
-Secrets: API keys via Electron `safeStorage` (OS keychain-backed), never in SQLite, never in the renderer, never logged. `.env` supported in dev only.
+**Storage can be evicted by iOS** for a site that is not on the Home Screen and has not been opened for a while. So: prompt to add to the Home Screen, request persistent storage, and make glossary export/import (JSON, via the share sheet) a first-class feature rather than an afterthought.
+
+Secrets: the two API keys live in the browser's local storage on the owner's phone. Never in the repository, never in built files, never in a URL, never logged. `.env` is used only by the Node eval scripts in development.
 
 **Seed glossary:** ship `seed/glossary.edge-ai.json` with ~80 canonical terms + aliases (including Hebrew-letter phonetic aliases), **without hand-written definitions**: run the grounding job once (`npm run seed:ground`) to generate verified explanations with sources. Starter term list to expand: SiMa.ai, Modalix, MLSoC, Palette SDK, RF-DETR (Nano/Small/Medium), YOLO family, DETR, transformer detector, NMS, mAP, quantization, INT8, QAT, PTQ, calibration set, ONNX, opset, TensorRT, TFLite, OpenVINO, NPU, TOPS, FPS/W, Hailo-8, Hailo-10, Jetson Orin, Qualcomm RB, Ambarella CV, Raspberry Pi AI HAT, GStreamer, pipeline element, MIPI CSI-2, GMSL, ISP, PoE, RTSP, H.264/H.265, BSP, Yocto, device tree, cross-compile, SoM, carrier board, eMMC, thermal throttling, model zoo, compile/partition (model compiler), operator support, fallback to CPU, pre/post-processing, letterbox, tracking (ByteTrack), ReID, segmentation, pose estimation, VLM, edge LLM, tokens/s, LoRA, distillation, pruning, OTA update, fleet management.
 
 ## 8. Privacy, safety, consent
 
-- No audio written to disk. Transcript storage can be turned off per session ("ephemeral mode").
-- Visible state at all times: listening / paused. Global pause hotkey.
-- Onboarding screen states plainly: audio is streamed to the STT provider and transcript text to the LLM provider; the user is responsible for recording/transcription consent in his jurisdiction and for his employer's and customers' confidentiality rules. Include a per-session "confidential — do not ground on the web" toggle that disables Stage C (web queries can leak customer-internal names).
+- No audio stored anywhere. Transcript storage can be turned off per session ("ephemeral mode").
+- Visible state at all times: listening / paused. One-tap pause.
+- **A phone on the table recording a meeting is visible to the people in it, and it captures everyone in the room, not only the call.** Onboarding states plainly: audio is streamed to the STT provider and transcript text to the LLM provider; the user is responsible for recording/transcription consent in his jurisdiction and for his employer's and customers' confidentiality rules. Include a per-session "confidential — do not ground on the web" toggle that disables Stage C (web queries can leak customer-internal names).
 - Never send transcript text in web search queries beyond the canonical term itself.
-- Content protection on by default (6.1).
+- The API keys are long-lived keys held in the browser. That is acceptable for one owner on his own phone and is **not** acceptable for a product with other users; productization needs a key-minting backend (section 12).
 
 ## 9. Testing and evaluation (build this early, it is how you verify without a live meeting)
 
 - **Replay mode:** `npm run replay -- fixtures/call01.wav` feeds a WAV through the real pipeline in real time (or `--speed 4`). `npm run replay:text -- fixtures/call01.jsonl` bypasses STT and feeds timed utterances straight into Stage A/B/C. The UI must work identically in replay.
-- **Fixtures:** create `fixtures/*.jsonl` by hand: at least 40 utterances — Hebrew with English terms, English terms written in Hebrew letters, garbled terms, pure English, and plenty of utterances with **no** terms. Each has `expected_terms` and `forbidden_terms`. Include the canonical example from section 1 in three garbled spellings. Ask the owner to record 2-3 short real audio samples for the WAV fixtures in Phase 0.
+- **Fixtures:** create `fixtures/*.jsonl` by hand: at least 40 utterances — Hebrew with English terms, English terms written in Hebrew letters, garbled terms, pure English, and plenty of utterances with **no** terms. Each has `expected_terms` and `forbidden_terms`. Include the canonical example from section 1 in three garbled spellings. Ask the owner to record 2-3 short real audio samples (Voice Memos on the phone, at desk distance from a speaker) for the WAV fixtures in Phase 0.
 - **Eval script:** `npm run eval` -> term precision, recall, canonicalization accuracy, false-card rate per minute on no-term speech, latency p50/p95 per stage, tokens and estimated cost per meeting hour. Write results to `eval/results/<date>.md`. **Targets:** precision >= 0.9, recall >= 0.75, false cards on no-term speech <= 1 per 5 min, latency per section 3.
 - Tune prompt and thresholds against the eval, not by feel. Keep prompts in `src/main/llm/prompts/*.md`, versioned.
 - **Unit tests:** resampler, PCM conversion, utterance assembler, fuzzy/alias matcher, dedup/rate-limit policy, schema validation, reconnect logic (mock socket).
-- **Smoke (Playwright-Electron):** app launches, panel opens, replay of a fixture produces the expected cards, "Know it" suppresses on second replay.
-- **Instrumentation:** every card records timestamps: speech_end, utterance_closed, llm_first_token, card_visible, grounded. A hidden debug overlay (hotkey) shows live latency and cost.
+- **Smoke (Playwright, iPhone 15 Pro viewport, fake microphone):** page loads, capture starts, replay of a fixture produces the expected cards, "Know it" suppresses on second replay. This runs in Chromium; **Safari on the real phone is only ever verified by the owner**, so every phase's demo checklist is run on the iPhone.
+- **Instrumentation:** every card records timestamps: speech_end, utterance_closed, llm_first_token, card_visible, grounded. A debug view (in settings) shows live latency and cost, with a button that copies the log so the owner can paste it back.
 
 ## 10. Phases
 
-Each phase: build, test, update README, commit, stop and show the demo checklist.
+Each phase: build, test, update README, commit, deploy, stop and show the demo checklist. The owner runs every checklist on the iPhone.
 
-### Phase 0 — De-risk spikes (throwaway code in `spikes/`)
+### Phase 0 — De-risk check page (throwaway code in `spikes/`)
 
-- S1: Electron app that captures mic + system loopback on this machine and shows two live RMS meters. Play a YouTube video: "them" meter must move, and a saved 5 s debug WAV must be audible.
-- S2: Node script streaming a WAV to Soniox; print tokens with language + finality. Try with and without a context list containing the section-1 terms; record the difference.
-- S3: Node script: fixture utterance -> fast Claude model with the extraction schema, streaming; print time to first token and total.
-- **Exit:** system audio verified non-silent; Hebrew/English mixed transcript is usable; end-to-end budget looks achievable. Write findings + chosen model IDs/params to `DECISIONS.md`. If S1 fails on this OS, stop and report options (virtual device fallback) before going on.
+One page the owner opens on the phone, with three checks:
+
+- S1: microphone capture in Safari — a live level meter, and a 5 s recording he can play back.
+- S2: live transcription through Soniox from that microphone, with and without the jargon context list.
+- S3: fixture utterances -> fast Claude model with the extraction schema, streaming; time to first token, to first card header, and total. Plus cards from his own live speech, end to end.
+- **Exit:** the phone hears a laptop speaker at desk distance well enough; Hebrew/English mixed transcript is usable; end-to-end budget looks achievable from a phone on Wi-Fi and on cellular. Write findings + chosen model IDs/params to `DECISIONS.md`. If the phone cannot hear the call well enough, stop and report options (external mic, speakerphone, phone placement) before going on.
 
 ### Phase 1 — Skeleton + live transcript
 
-- electron-vite scaffold, strict TS, lint, secure preload bridge, settings + key storage, second-display window.
-- Audio worklets -> MessagePort -> main -> SttProvider (Soniox) x2 -> utterance assembler -> live transcript view with me/them labels.
+- Vite + React scaffold, strict TS, lint, settings + key storage, PWA manifest, wake lock, safe-area layout.
+- Audio worklet -> SttProvider (Soniox) -> utterance assembler -> live transcript view with speaker labels.
+- Reconnect with backoff, keepalive while paused, recovery after the page was in the background.
 - Replay mode (WAV) working.
-- **Demo:** start, talk in mixed Hebrew/English while a video plays; both streams transcribe live, correctly labelled; kill the network for 5 s and it recovers.
+- **Demo:** start, talk in mixed Hebrew/English while a video plays on the laptop; it transcribes live; switch to another app and back, and turn Wi-Fi off for 5 s — it recovers both times.
 
 ### Phase 2 — Cards
 
@@ -312,7 +327,7 @@ Each phase: build, test, update README, commit, stop and show the demo checklist
 
 ### Phase 3 — Glossary, memory, grounding
 
-- SQLite, glossary + aliases, Stage A matcher, known-terms suppression, STT context built from glossary.
+- IndexedDB, glossary + aliases, Stage A matcher, known-terms suppression, STT context built from glossary.
 - Stage C grounding with web search, in-place card update, persistence back to glossary, "confidential" toggle.
 - Seed glossary + `seed:ground` job.
 - **Demo:** first replay shows a "?" card that becomes "verified" with sources; second replay shows the same card instantly from cache; "Know it" removes it for good.
@@ -321,21 +336,21 @@ Each phase: build, test, update README, commit, stop and show the demo checklist
 
 - Relations / "How it fits" strip, pinned strip, "More" deep-dive, Ask box.
 - Pre-meeting brief flow (6.5).
-- Global hotkeys including "What was that?".
+- "What was that?" button; mark a speaker as "me".
 - Full bidi pass, typography and layout polish to the standard in 6.1. Expand fixtures to 40+, tune to hit the eval targets.
 - **Demo:** paste a brief, start, replay; pre-warmed cards are instant; relation card appears when the two terms co-occur; all eval targets met.
 
-### Phase 5 — Sessions, review, packaging
+### Phase 5 — Sessions, review, install
 
-- Session persistence, review screen, Markdown export, glossary management screen.
-- Onboarding (permissions per OS, headphones advice, consent/privacy text), silent-track guard, error states for missing keys / quota / offline.
+- Session persistence, review screen, Markdown export via the share sheet, glossary management screen with JSON export/import.
+- Onboarding (microphone permission, Add to Home Screen, where to put the phone, consent/privacy text), silent and too-quiet guards, error states for missing keys / quota / offline.
 - Deepgram fallback provider behind the interface.
-- electron-builder config for the current OS; document signing/notarization steps for later rather than doing them.
-- **Demo:** install the packaged app on this machine, run a real 10-minute call, review and export afterwards.
+- Service worker for the app shell; persistent-storage request.
+- **Demo:** install to the Home Screen, run a real 10-minute call, review and export afterwards.
 
 ### Phase 6 — Hardening
 
-- 90-minute soak replay: no memory growth, session rollover works, DB writes batched.
+- 90-minute soak replay: no memory growth, stream rollover works, battery and heat on the real phone are acceptable, DB writes batched.
 - Cost and latency report from real usage; cost shown per session in the review screen.
 - Fix list from the owner's first real meetings.
 
@@ -343,21 +358,19 @@ Each phase: build, test, update README, commit, stop and show the demo checklist
 
 ```
 gloss/
-  PLAN.md  DECISIONS.md  README.md
+  PLAN.md  DECISIONS.md  README.md  vercel.json
+  index.html
   src/
-    main/
-      index.ts  windows.ts  ipc.ts  hotkeys.ts  settings.ts  secrets.ts
-      audio/router.ts
-      stt/{provider.ts,soniox.ts,deepgram.ts,mock.ts}
-      pipeline/{assembler.ts,glossaryMatcher.ts,extractor.ts,grounder.ts,cardPolicy.ts,session.ts}
-      llm/{client.ts,schema.ts,prompts/*.md}
-      db/{index.ts,migrations/*.sql,repos/*.ts}
-    preload/index.ts
-    renderer/
-      capture/{capture.ts,pcm-worklet.ts}
-      panel/{App.tsx,components/*,store.ts}
-      screens/{Start.tsx,Review.tsx,Glossary.tsx,Settings.tsx,Onboarding.tsx}
-    shared/{types.ts,ipc-contract.ts}
+    main.tsx  App.tsx
+    audio/{capture.ts,pcm-core.js,pcm-worklet.js,wakeLock.ts}
+    stt/{provider.ts,soniox.ts,deepgram.ts,mock.ts}
+    pipeline/{assembler.ts,glossaryMatcher.ts,extractor.ts,grounder.ts,cardPolicy.ts,session.ts}
+    llm/{client.ts,schema.ts,prompts/*.md}
+    db/{index.ts,repos/*.ts}
+    ui/{components/*,store.ts}
+    screens/{Start.tsx,Live.tsx,Review.tsx,Glossary.tsx,Settings.tsx,Onboarding.tsx}
+    shared/types.ts
+  public/{manifest.webmanifest,icons/}
   seed/glossary.edge-ai.json
   fixtures/{*.wav,*.jsonl}
   eval/{run.ts,results/}
@@ -370,13 +383,14 @@ gloss/
 - Bots that join meetings, calendar integration, cloud backend, accounts, billing, team sharing.
 - Vector databases / RAG. The glossary is small; exact + fuzzy matching is enough.
 - Local STT/LLM. Keep the interfaces clean so they can be added.
-- Mobile.
+- A native iOS app, capturing call audio from other apps, working with the screen locked or in the background, and working when he wears headphones.
+- A desktop app. (The original plan; dropped in favour of the phone.)
 
-Productization later (not now): backend key proxy, shared team glossaries, per-customer term packs, admin controls, signed auto-updating builds.
+Productization later (not now): a backend that mints short-lived provider keys, shared team glossaries, per-customer term packs, admin controls, a native app if background listening is ever needed.
 
 ## 13. Definition of done
 
-- A real mixed Hebrew/English call produces correct, non-repeating cards within the latency budget, on the second screen, invisible to screen share.
+- A real mixed Hebrew/English call, played on speakers with the phone on the desk, produces correct, non-repeating cards within the latency budget.
 - Eval targets in section 9 are met and the report is committed.
 - The canonical example from section 1 works from live speech, including the "how it fits" card.
-- A fresh clone runs with `npm i && npm run dev` after adding two keys; README says exactly how.
+- The owner opens one URL on his iPhone, adds it to the Home Screen, enters two keys, and it works; README says exactly how. A fresh clone runs with `npm i && npm run dev`.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { downmix, encodeWav, floatToPcm16, Framer, Resampler, rms } from '../../spikes/s1-audio/pcm-core.js';
+import { downmix, encodeWav, floatToPcm16, Framer, Resampler, rms } from '../../spikes/phone/src/pcm-core.js';
 
 const sine = (hz: number, rate: number, seconds: number) =>
   Float32Array.from({ length: Math.round(rate * seconds) }, (_, i) => Math.sin((2 * Math.PI * hz * i) / rate));
