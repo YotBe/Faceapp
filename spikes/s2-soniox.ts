@@ -6,21 +6,18 @@
 // The WAV must be mono 16 kHz PCM16. Convert anything else with:
 //   ffmpeg -i in.m4a -ac 1 -ar 16000 -c:a pcm_s16le out.wav
 //
-// UNVERIFIED AGAINST DOCS: soniox.com was unreachable from the build
-// environment, so the endpoint, field names and model id below are from memory
-// (see DECISIONS.md). Every one is overridable by env var; check them against
-// https://soniox.com/docs before trusting a failure or a success.
+// Protocol per docs.soniox.com (read 2026-11-11); see DECISIONS.md.
 import fs from 'node:fs';
 import WebSocket from 'ws';
+import { CONTEXT_TERMS } from './shared/fixtures.js';
 
 const URL = process.env.SONIOX_WS_URL ?? 'wss://stt-rt.soniox.com/transcribe-websocket';
-const MODEL = process.env.SONIOX_MODEL ?? 'stt-rt-preview';
-const CONTEXT_TERMS = ['SiMa.ai', 'Modalix', 'MLSoC', 'Palette SDK', 'RF-DETR', 'RF-DETR Nano', 'dev board', 'INT8', 'ONNX'];
+const MODEL = process.env.SONIOX_MODEL ?? 'stt-rt-v6';
 const FRAME_MS = 100;
 const RATE = 16000;
 
 type Token = { text: string; is_final: boolean; language?: string; speaker?: string; start_ms?: number; end_ms?: number };
-type Msg = { tokens?: Token[]; finished?: boolean; error_code?: number; error_message?: string };
+type Msg = { tokens?: Token[]; finished?: boolean; error_code?: number; error_type?: string; error_message?: string };
 
 function readWavPcm(file: string): Buffer {
   const buf = fs.readFileSync(file);
@@ -49,7 +46,7 @@ async function run(pcm: Buffer, label: string, context: unknown): Promise<string
   const apiKey = process.env.SONIOX_API_KEY;
   if (!apiKey) throw new Error('SONIOX_API_KEY is not set (put it in .env)');
   console.log(`\n=== ${label} (model ${MODEL}) ===`);
-  const ws = new WebSocket(URL);
+  const ws = new WebSocket(URL, { headers: { Authorization: `Bearer ${apiKey}` } });
   const finalText: string[] = [];
   const t0 = Date.now();
   let firstTokenMs: number | undefined;
@@ -62,7 +59,7 @@ async function run(pcm: Buffer, label: string, context: unknown): Promise<string
     });
     ws.on('message', (data) => {
       const msg = JSON.parse(data.toString()) as Msg;
-      if (msg.error_code) return reject(new Error(`Soniox error ${msg.error_code}: ${msg.error_message}`));
+      if (msg.error_code) return reject(new Error(`Soniox error ${msg.error_code} ${msg.error_type}: ${msg.error_message}`));
       for (const t of msg.tokens ?? []) {
         firstTokenMs ??= Date.now() - t0;
         if (t.text === '<end>') {
@@ -86,7 +83,6 @@ async function run(pcm: Buffer, label: string, context: unknown): Promise<string
   });
   ws.send(
     JSON.stringify({
-      api_key: apiKey,
       model: MODEL,
       audio_format: 'pcm_s16le',
       sample_rate: RATE,
@@ -94,6 +90,7 @@ async function run(pcm: Buffer, label: string, context: unknown): Promise<string
       language_hints: ['he', 'en'],
       enable_language_identification: true,
       enable_endpoint_detection: true,
+      enable_speaker_diarization: true,
       ...(context ? { context } : {}),
     }),
   );
@@ -105,7 +102,7 @@ async function run(pcm: Buffer, label: string, context: unknown): Promise<string
     ws.send(pcm.subarray(off, off + frameBytes));
     await new Promise((r) => setTimeout(r, FRAME_MS));
   }
-  if (ws.readyState === WebSocket.OPEN) ws.send(''); // empty frame = end of audio
+  if (ws.readyState === WebSocket.OPEN) ws.send(''); // empty TEXT frame ends the stream (an empty binary frame does not)
   await done;
 
   const text = finalText.join('');

@@ -1,6 +1,0 @@
-{"id":"canon-clean","source":"them","text":"על ה-dev board של SiMa, המודליקס החדש, צריך להריץ RF-DETR Nano","expected_terms":["SiMa.ai Modalix","RF-DETR Nano"],"forbidden_terms":[]}
-{"id":"canon-hebrew-letters","source":"them","text":"על הדב בורד של סימה, המודליקס החדש, צריך להריץ אר אף דיטר נאנו","expected_terms":["SiMa.ai Modalix","RF-DETR Nano"],"forbidden_terms":[]}
-{"id":"canon-garbled","source":"them","text":"on the seema dev board, the new modelics, you need to run RFD TR nano","expected_terms":["SiMa.ai Modalix","RF-DETR Nano"],"forbidden_terms":[]}
-{"id":"canon-split","source":"them","text":"אז על הסימא איי מודאליקס אנחנו רוצים RF detter נאנו ב-INT8","expected_terms":["SiMa.ai Modalix","RF-DETR Nano","INT8"],"forbidden_terms":[]}
-{"id":"no-terms-smalltalk","source":"me","text":"מעולה, אז אני אשלח לכם סיכום אחרי הפגישה ונקבע שיחה לשבוע הבא","expected_terms":[],"forbidden_terms":["API","Docker"]}
-{"id":"no-terms-general-sw","source":"them","text":"we have a REST API in Docker and the latency on the GPU is fine for now","expected_terms":[],"forbidden_terms":["REST","API","Docker","GPU","latency"]}
