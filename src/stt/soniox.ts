@@ -52,7 +52,9 @@ export function openSoniox(apiKey: string, terms: string[], h: SonioxHandlers): 
       const retryable = msg.error_code === 503 || msg.error_code === 408 || msg.error_code === 413;
       const what =
         msg.error_code === 401 ? 'Soniox did not accept the API key.'
-        : msg.error_code === 402 || msg.error_type === 'insufficient_funds' ? 'The Soniox account is out of credit.'
+        : msg.error_type === 'organization_monthly_budget_exhausted' || msg.error_type === 'project_monthly_budget_exhausted'
+          ? 'Soniox has reached its monthly spending limit. Raise the limit in the Soniox console under Limits, then tap Resume.'
+        : msg.error_code === 402 ? 'The Soniox account has no credit. Add funds in the Soniox console under Billing, then tap Resume.'
         : msg.error_code === 429 ? 'Soniox is rate-limiting this account.'
         : `Soniox error ${msg.error_code}: ${msg.error_message ?? msg.error_type ?? 'unknown'}`;
       failure = { message: what, retryable };
