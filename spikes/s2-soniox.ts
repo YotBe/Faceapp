@@ -9,7 +9,7 @@
 // Protocol per docs.soniox.com (read 2026-11-11); see DECISIONS.md.
 import fs from 'node:fs';
 import WebSocket from 'ws';
-import { CONTEXT_TERMS } from './shared/fixtures.js';
+import { CONTEXT_TERMS } from '../src/llm/fixtures.js';
 
 const URL = process.env.SONIOX_WS_URL ?? 'wss://stt-rt.soniox.com/transcribe-websocket';
 const MODEL = process.env.SONIOX_MODEL ?? 'stt-rt-v6';

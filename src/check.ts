@@ -1,10 +1,10 @@
 // Phase 0 check page for the iPhone. Throwaway: proves the microphone,
 // Soniox from the browser, and Claude extraction latency on the real device.
 import Anthropic from '@anthropic-ai/sdk';
-import { CONFIGS, runExtraction, score, type Extraction } from '../../shared/extraction.js';
-import { CONTEXT_TERMS, FIXTURES } from '../../shared/fixtures.js';
-import { encodeWav } from './pcm-core.js';
-import workletUrl from './pcm-worklet.js?worker&url';
+import { CONFIGS, runExtraction, score, type Extraction } from './llm/extraction.js';
+import { CONTEXT_TERMS, FIXTURES } from './llm/fixtures.js';
+import { encodeWav } from './audio/pcm-core.js';
+import workletUrl from './audio/pcm-worklet.js?worker&url';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const SONIOX_URL = 'wss://stt-rt.soniox.com/transcribe-websocket';

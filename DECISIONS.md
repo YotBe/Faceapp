@@ -47,9 +47,58 @@ backend (PLAN §12).
 `vercel.json` sets the Vite build and the security headers. The page is public
 but holds no secrets and is marked `noindex`.
 
+## 2026-11-11 — The app screen, built ahead of Phase 0 at the owner's request
+
+The owner sent a concept video for Gloss and asked for the app to take it as
+inspiration and improve on it. So the real screen now exists before Phase 0's
+exit criteria are met. This is a deliberate reordering: he could not see
+anything until there was something to look at. **Phase 0 is still open**, and
+the live path below is unproven until he runs it on the phone.
+
+**Taken from the video:** the "Listening" pill with a live waveform, the
+current sentence with jargon highlighted in yellow as it is spoken, a "Heard
+just now" card, earlier cards stacked beneath it, and a light "cheat sheet"
+with a Share button when the session ends.
+
+**Added, because the video does not have them:** the "How it fits" card that
+relates two terms and names the gotcha; an "unverified" mark on anything the
+model is unsure of; "I know this" (suppressed for good) and Pin; why the term
+matters in *this* sentence; right-to-left Hebrew with English terms inline; a
+demo that needs no keys.
+
+**Not possible in a web app, and not built:** the video shows cards on the
+lock screen and expanding out of the Dynamic Island. Both are iOS Live
+Activities, available only to a native app. Here the cards live inside the
+page, which must stay open with the screen on.
+
+**Not changed:** the video pitches Gloss to a student in a lecture. The app
+still describes its listener as a Field Applications Engineer new to edge AI
+(`SYSTEM` in `src/llm/extraction.ts`) and biases Soniox toward edge-AI terms.
+Serving lectures would mean making that profile and term list a setting. That
+is a product decision for the owner, not taken here.
+
+**Demo content is hand-written sample text**, shown under a "Demo" tag, with
+no latency figure because nothing was measured. It is not verified against
+vendor documentation.
+
+Pulled forward from later phases, in simplified form: capture and wake lock,
+the Soniox client with reconnect, utterance assembly, one-in-flight extraction
+with merge of whatever is said meanwhile, dedup, known-term suppression,
+confidence thresholds, pin, relations, cheat sheet and share. Still missing
+from those phases: progressive rendering while the model streams, the rate
+limit and overflow row, the glossary and Stage A, grounding, "What was that?",
+the Ask box, the brief, session storage, replay and eval.
+
+Stack notes: plain CSS instead of Tailwind — one screen and three views did
+not justify the tooling, and the CSP stays `style-src 'self'`. Vite 7 and
+Vitest 3 rather than the newest majors, because `npm install` crashes
+resolving Vitest 4 here (`Cannot read properties of null (reading
+'edgesOut')`). `npm audit` reports three advisories, all inside the Vitest
+development toolchain; nothing from it ships in the built page.
+
 ## Phase 0 — check page
 
-**Status: written, deployed, and verified in headless Chromium only.** The
+**Status: written and verified in headless Chromium only.** It is at `/check.html`. The
 exit criteria need the owner's iPhone and his two keys.
 
 | Exit criterion | State |
