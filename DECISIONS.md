@@ -96,6 +96,68 @@ resolving Vitest 4 here (`Cannot read properties of null (reading
 'edgesOut')`). `npm audit` reports three advisories, all inside the Vitest
 development toolchain; nothing from it ships in the built page.
 
+## 2026-11-11 — Visual design: the iOS system look
+
+The owner asked for Gloss to look like a current iPhone app rather than a
+generated one. The first screen had a purple-and-green glow, a gradient logo,
+neon accents and small capitalised labels. All of that is gone. The rule now:
+**draw nothing iOS itself would not draw.**
+
+- System colours, in light and dark, following the phone's appearance setting.
+- San Francisco at the Dynamic Type text styles (`font: -apple-system-body`
+  and friends), so the phone's text-size setting is respected. Other browsers
+  get fixed sizes that match the defaults.
+- Large titles, inset grouped lists with hairline separators, a settings sheet
+  with a grabber and Cancel / Save, a floating translucent toolbar, capsule
+  buttons, one tint colour (system blue), red only for recording and "End".
+- Terms in the transcript get a yellow highlighter background, which reads in
+  both appearances; yellow text did not in light mode.
+- No logo on the home screen; apps do not show their own icon inside
+  themselves. The icon exists for the Home Screen (`public/`), with a web
+  manifest so "Add to Home Screen" opens Gloss full-screen.
+- Icons are drawn for Gloss. Apple's SF Symbols are licensed for use in apps
+  on Apple platforms, not on the web, so they are not used.
+
+A layout bug found while testing this: the list of earlier cards was a
+shrinking flex item with clipped overflow, so its last rows were cut off and
+could not be reached. Items in the scroll area no longer shrink.
+
+## 2026-11-11 — First run on the real iPhone; any subject, in Hebrew
+
+**What the owner's phone has now shown** (two screenshots, real keys):
+
+- The page loads and runs in a WebKit browser on the iPhone 15 Pro.
+- The microphone starts, the worklet delivers audio, and Soniox accepts the
+  key from the protocols list.
+- A zero-balance Soniox account is refused with 402; the message now says
+  whether it is the balance or a budget cap and where to fix it.
+- With credit added, mixed Hebrew and English is transcribed live, with
+  "SiMa.ai", "Modalix" and "RF-DETR" spelled correctly.
+- **No card appeared**, and the screen gave no reason. Whether the Anthropic
+  request failed, stalled, or returned nothing is not known yet.
+
+So the card step now reports itself: a status line under the transcript says
+"Checking the last sentence…" or "No new terms in the last sentence"; errors
+name the cause (bad key, no credit, rate limit, no connection, timeout); the
+request has a 12 s deadline and one retry, because a stalled request used to
+block every later sentence silently; and Settings has **Copy Diagnostics**,
+an in-memory event log with timings and error text and no keys or audio.
+
+**Audience change, at the owner's request:** Gloss is for a Hebrew speaker
+listening to talk on almost any subject, not only an engineer in edge-AI
+calls. This replaces PLAN §1 and §5.5's owner profile.
+
+- The extraction prompt describes a general listener and any field, with an
+  optional "About you" note from Settings (who they are, what the talk is
+  about) so it does not explain what they already know.
+- Cards are written in Hebrew by default; Settings switches to English.
+- At most two terms per sentence. A general audience makes over-explaining
+  the main risk, and the precision rule from PLAN §3 matters more, not less.
+- Soniox no longer gets the edge-AI term list. It gets the "About you" text
+  as context when there is one.
+- The built-in demo is still the English edge-AI example.
+- The app's own labels are still in English.
+
 ## Phase 0 — check page
 
 **Status: written and verified in headless Chromium only.** It is at `/check.html`. The

@@ -1,15 +1,22 @@
 import { useState } from 'react';
 import { getKey, setKey } from '../keys.js';
+import { getAbout, getLang, setAbout, setLang, type Lang } from '../prefs.js';
 import { useGloss } from '../store.js';
+import { Chevron } from './icons.js';
 
 export function Settings({ needKeys, onClose }: { needKeys: boolean; onClose(): void }) {
   const [soniox, setSoniox] = useState(getKey('soniox'));
   const [anthropic, setAnthropic] = useState(getKey('anthropic'));
   const known = useGloss((s) => s.known);
+  const [lang, setLangState] = useState<Lang>(getLang());
+  const [about, setAboutState] = useState(getAbout());
+  const [copied, setCopied] = useState('');
 
   const save = () => {
     setKey('soniox', soniox);
     setKey('anthropic', anthropic);
+    setLang(lang);
+    setAbout(about);
     onClose();
   };
   const forget = () => {
@@ -21,29 +28,83 @@ export function Settings({ needKeys, onClose }: { needKeys: boolean; onClose(): 
     useGloss.setState({ known: [] });
   };
 
+  const copyLog = async () => {
+    const log = useGloss.getState().log;
+    try {
+      await navigator.clipboard.writeText(log.length ? log.join('\n') : 'No events yet. Start listening first.');
+      setCopied(log.length ? 'Copied. Paste it to Claude.' : 'Nothing recorded yet. Start listening first.');
+    } catch {
+      setCopied('Could not copy from this browser.');
+    }
+  };
+
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="Settings">
       <div className="panel">
-        <h2>Keys and settings</h2>
-        {needKeys && <p className="banner">Gloss needs both keys before it can listen. The demo works without them.</p>}
-        <p className="fine">Gloss sends audio to Soniox for transcription and the text to Anthropic for the cards. Your keys stay on this phone.</p>
-        <label>
-          Soniox API key
-          <input type="password" value={soniox} onChange={(e) => setSoniox(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />
-        </label>
-        <label>
-          Anthropic API key
-          <input type="password" value={anthropic} onChange={(e) => setAnthropic(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} />
-        </label>
-        <button className="btn primary" onClick={save}>Save</button>
-        <button className="btn quiet" onClick={onClose}>Cancel</button>
+        <div className="grabber" aria-hidden="true" />
+        <nav className="sheet-nav">
+          <button className="navbtn text" onClick={onClose}>Cancel</button>
+          <strong>Settings</strong>
+          <button className="navbtn text bold" onClick={save}>Save</button>
+        </nav>
 
-        <hr />
-        <p className="fine">
-          {known.length === 0 ? 'No terms marked “I know this” yet.' : `${known.length} ${known.length === 1 ? 'term' : 'terms'} marked “I know this” and never shown again.`}
+        {needKeys && <p className="banner">Add both keys to start listening. The demo works without them.</p>}
+
+        <h3 className="section-title">Cards</h3>
+        <div className="group">
+          <div className="cell">
+            <span>Explain in</span>
+            <span className="segmented" role="group" aria-label="Card language">
+              <button aria-pressed={lang === 'he'} onClick={() => setLangState('he')}>עברית</button>
+              <button aria-pressed={lang === 'en'} onClick={() => setLangState('en')}>English</button>
+            </span>
+          </div>
+          <label className="field stacked">
+            <span>About you (optional)</span>
+            <textarea value={about} onChange={(e) => setAboutState(e.target.value)} rows={3} dir="auto" placeholder="For example: software engineer, new to medicine. Today’s talk is about cardiology." />
+          </label>
+        </div>
+        <p className="footnote">Gloss works on any subject. Saying who you are and what the talk is about keeps it from explaining things you already know.</p>
+
+        <h3 className="section-title">Transcription</h3>
+        <div className="group">
+          <label className="field">
+            <span>Soniox key</span>
+            <input type="password" value={soniox} onChange={(e) => setSoniox(e.target.value)} placeholder="Paste key" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+          </label>
+        </div>
+        <p className="footnote">
+          Turns speech into text. Create an account at <a href="https://console.soniox.com/signup" target="_blank" rel="noreferrer">console.soniox.com</a>, open <b>My First Project</b>, then <b>API Keys</b>.
         </p>
-        {known.length > 0 && <button className="btn quiet" onClick={forget}>Show them again</button>}
-        <p className="fine"><a href="/check.html">Run the phone check</a> — tests the microphone and both services.</p>
+
+        <h3 className="section-title">Explanations</h3>
+        <div className="group">
+          <label className="field">
+            <span>Anthropic key</span>
+            <input type="password" value={anthropic} onChange={(e) => setAnthropic(e.target.value)} placeholder="Paste key" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+          </label>
+        </div>
+        <p className="footnote">
+          Writes the cards. Sign in at <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noreferrer">platform.claude.com</a>, add credit under <b>Billing</b>, then create a key under <b>API Keys</b>.
+        </p>
+        <p className="footnote">Keys are stored on this phone only. Audio goes to Soniox and the transcript to Anthropic; nothing else leaves the phone.</p>
+
+        <h3 className="section-title">Known Terms</h3>
+        <div className="group">
+          <div className="cell"><span>Marked “Know It”</span><span className="value">{known.length}</span></div>
+          {known.length > 0 && <button className="cell destructive" onClick={forget}>Reset Known Terms</button>}
+        </div>
+        <p className="footnote">Terms you mark “Know It” are never shown again.</p>
+
+        <div className="group">
+          <a className="cell link" href="/check.html"><span>Run Phone Check</span><Chevron /></a>
+        </div>
+        <p className="footnote">Tests the microphone and both services.</p>
+
+        <div className="group">
+          <button className="cell tinted" onClick={() => void copyLog()}>Copy Diagnostics</button>
+        </div>
+        <p className="footnote">{copied || 'Copies what happened in this session (timings and errors, never your keys or audio) so you can send it when something doesn’t work.'}</p>
       </div>
     </div>
   );

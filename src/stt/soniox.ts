@@ -16,7 +16,8 @@ export type SonioxHandlers = {
 
 export type SonioxStream = { send(pcm: ArrayBuffer): void; finish(): void; close(): void };
 
-export function openSoniox(apiKey: string, terms: string[], h: SonioxHandlers): SonioxStream {
+/** `about`: optional free text on who is listening and the subject, used to bias recognition. */
+export function openSoniox(apiKey: string, about: string, h: SonioxHandlers): SonioxStream {
   // Browsers cannot set headers on a WebSocket; the key goes in the protocols
   // list. A bad key still opens: the error arrives as a frame.
   const ws = new WebSocket(URL, ['soniox-api-key', apiKey]);
@@ -37,10 +38,7 @@ export function openSoniox(apiKey: string, terms: string[], h: SonioxHandlers): 
         enable_language_identification: true,
         enable_endpoint_detection: true,
         enable_speaker_diarization: true,
-        context: {
-          general: [{ key: 'domain', value: 'Edge AI hardware and computer-vision model deployment' }],
-          terms,
-        },
+        ...(about ? { context: { text: about } } : {}),
       }),
     );
     for (const pcm of backlog.splice(0)) ws.send(pcm);
@@ -52,7 +50,9 @@ export function openSoniox(apiKey: string, terms: string[], h: SonioxHandlers): 
       const retryable = msg.error_code === 503 || msg.error_code === 408 || msg.error_code === 413;
       const what =
         msg.error_code === 401 ? 'Soniox did not accept the API key.'
-        : msg.error_code === 402 || msg.error_type === 'insufficient_funds' ? 'The Soniox account is out of credit.'
+        : msg.error_type === 'organization_monthly_budget_exhausted' || msg.error_type === 'project_monthly_budget_exhausted'
+          ? 'Soniox has reached its monthly spending limit. Raise the limit in the Soniox console under Limits, then tap Resume.'
+        : msg.error_code === 402 ? 'The Soniox account has no credit. Add funds in the Soniox console under Billing, then tap Resume.'
         : msg.error_code === 429 ? 'Soniox is rate-limiting this account.'
         : `Soniox error ${msg.error_code}: ${msg.error_message ?? msg.error_type ?? 'unknown'}`;
       failure = { message: what, retryable };
