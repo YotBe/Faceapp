@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>Gloss spike S1 — audio capture</title>
+    <style>
+      body { font: 15px system-ui, sans-serif; background: #111; color: #eee; margin: 24px; }
+      h1 { font-size: 18px; }
+      .row { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
+      .label { width: 60px; font-weight: 600; }
+      .meter { flex: 1; height: 22px; background: #2a2a2a; border-radius: 4px; overflow: hidden; }
+      .bar { height: 100%; width: 0; background: #3ddc84; transition: width 80ms linear; }
+      .val { width: 150px; font: 13px ui-monospace, monospace; color: #aaa; }
+      button, select { font: inherit; padding: 6px 12px; }
+      #warn { color: #ffb020; font-weight: 600; min-height: 1.4em; white-space: pre-wrap; }
+      pre { background: #1b1b1b; padding: 10px; border-radius: 4px; font-size: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Gloss spike S1 — mic + system audio</h1>
+    <div class="row">
+      <button id="start">Start capture</button>
+      <button id="record" disabled>Record 5 s to WAV</button>
+      <label>System audio source:
+        <select id="themSource"><option value="loopback">loopback (Windows / macOS)</option></select>
+      </label>
+    </div>
+    <div class="row"><span class="label">me</span><div class="meter"><div class="bar" id="meBar"></div></div><span class="val" id="meVal">—</span></div>
+    <div class="row"><span class="label">them</span><div class="meter"><div class="bar" id="themBar"></div></div><span class="val" id="themVal">—</span></div>
+    <div id="warn"></div>
+    <pre id="log"></pre>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>

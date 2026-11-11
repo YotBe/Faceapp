@@ -1,0 +1,25 @@
+{
+  "name": "gloss",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Live jargon explainer for meetings",
+  "scripts": {
+    "spike:s1": "electron spikes/s1-audio/main.cjs",
+    "spike:s2": "tsx --env-file-if-exists=.env spikes/s2-soniox.ts",
+    "spike:s3": "tsx --env-file-if-exists=.env spikes/s3-extract.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@types/node": "^22",
+    "@types/ws": "^8",
+    "electron": "^45",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vitest": "^3",
+    "ws": "^8",
+    "zod": "^4"
+  }
+}
