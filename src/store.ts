@@ -31,6 +31,10 @@ type State = {
   fresh: string | null;
   known: string[];
   thinking: boolean;
+  /** What happened to the last sentence, so silence is never ambiguous. */
+  lastResult: string | null;
+  /** Recent events, for the owner to copy when something goes wrong. */
+  log: string[];
   notice: string | null;
   error: string | null;
 
@@ -38,6 +42,7 @@ type State = {
   addCards(cards: Card[], relations: Relation[], spoken: string[], bumped: string[]): void;
   markKnown(key: string): void;
   togglePin(key: string): void;
+  note(event: string): void;
 };
 
 export const useGloss = create<State>((set) => ({
@@ -54,11 +59,15 @@ export const useGloss = create<State>((set) => ({
   fresh: null,
   known: loadKnown(),
   thinking: false,
+  lastResult: null,
+  log: [],
   notice: null,
   error: null,
 
+  note: (event) => set((s) => ({ log: [...s.log.slice(-149), `${new Date().toISOString().slice(11, 23)} ${event}`] })),
+
   reset: (demo) =>
-    set({ demo, phase: 'listening', level: 0, startedAt: Date.now(), elapsedMs: 0, lines: [], interim: '', spoken: [], cards: [], relations: [], fresh: null, thinking: false, notice: null, error: null }),
+    set({ demo, phase: 'listening', level: 0, startedAt: Date.now(), elapsedMs: 0, lines: [], interim: '', spoken: [], cards: [], relations: [], fresh: null, thinking: false, lastResult: null, notice: null, error: null }),
 
   addCards: (cards, relations, spoken, bumped) =>
     set((s) => {

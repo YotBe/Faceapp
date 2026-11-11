@@ -225,3 +225,15 @@ mark { color: inherit; background: var(--mark); border-radius: 5px; padding: 0 3
   .panel { max-width: 440px; }
   .toolbar { max-width: 440px; margin: 0 auto; }
 }
+
+/* settings additions */
+.cell.tinted { color: var(--blue); }
+.segmented { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--fill); }
+.segmented button { min-width: 74px; height: 30px; padding: 0 10px; border-radius: 7px; font-size: 15px; }
+.segmented button[aria-pressed='true'] { background: var(--cell); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18); }
+.panel .segmented button[aria-pressed='true'] { background: var(--sheet-cell); }
+@media (prefers-color-scheme: dark) { .panel .segmented button[aria-pressed='true'] { background: #636366; } }
+.field.stacked { display: grid; gap: 4px; padding: 10px 16px 12px; align-items: start; }
+.field.stacked span { color: var(--label2); font-size: 13px; }
+.field textarea { width: 100%; border: 0; background: none; color: var(--label); font: inherit; font-size: 17px; resize: none; outline: none; padding: 0; }
+.field textarea::placeholder { color: var(--label3); }

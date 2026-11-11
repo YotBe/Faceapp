@@ -3,8 +3,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { holdWakeLock, releaseWakeLock, startCapture, type Capture, type Frame } from '../audio/capture.js';
 import { getKey } from '../keys.js';
+import { getAbout, getLang } from '../prefs.js';
 import { runExtraction, type Extraction } from '../llm/extraction.js';
-import { CONTEXT_TERMS } from '../llm/fixtures.js';
 import { openSoniox, type SonioxStream } from '../stt/soniox.js';
 import { useGloss } from '../store.js';
 import { DEMO } from './demo.js';
@@ -14,6 +14,8 @@ const S = useGloss;
 const MAX_RETRIES = 4;
 const LONG_UTTERANCE_CHARS = 260; // close a monologue that never pauses
 const SILENCE_GUARD_MS = 5000;
+const EXTRACTION_TIMEOUT_MS = 12000;
+const note = (e: string) => S.getState().note(e);
 
 let capture: Capture | undefined;
 let stream: SonioxStream | undefined;
@@ -82,19 +84,36 @@ function queueExtraction(text: string, spokeAt: number) {
   S.setState({ thinking: true });
   const s = S.getState();
   const context = s.lines.slice(-12, -1).map((l) => `${l.speaker ? `S${l.speaker}` : '-'}: ${l.text}`).join('\n');
-  const client = new Anthropic({ apiKey: getKey('anthropic'), dangerouslyAllowBrowser: true });
-  runExtraction(client, { utterance: text, transcriptSoFar: context, alreadyShown: [...s.cards.map((c) => c.canonical), ...s.known] })
+  // One retry at most: a card that arrives ten seconds late is no use.
+  const client = new Anthropic({ apiKey: getKey('anthropic'), dangerouslyAllowBrowser: true, maxRetries: 1 });
+  const t0 = performance.now();
+  note(`extract start (${text.length} chars)`);
+  runExtraction(
+    client,
+    { utterance: text, transcriptSoFar: context, alreadyShown: [...s.cards.map((c) => c.canonical), ...s.known], explainLanguage: getLang(), listener: getAbout() || undefined },
+    undefined,
+    undefined,
+    EXTRACTION_TIMEOUT_MS,
+  )
     .then((r) => {
       if (S.getState().phase === 'idle') return;
+      const before = S.getState().cards.length;
       applyExtraction(r.parsed, (performance.now() - spokeAt) / 1000);
+      const added = S.getState().cards.length - before;
+      note(`extract ok in ${Math.round(performance.now() - t0)} ms: model gave ${r.parsed.terms.length} [${r.parsed.terms.map((t) => `${t.canonical}@${t.confidence}`).join(', ')}], added ${added}; first token ${Math.round(r.ttftMs ?? -1)} ms`);
+      S.setState({ lastResult: added > 0 ? null : 'No new terms in the last sentence.', error: null });
     })
     .catch((e: unknown) => {
       const message =
-        e instanceof Anthropic.AuthenticationError ? 'Anthropic did not accept the API key. Check it in settings.'
-        : e instanceof Anthropic.RateLimitError ? 'Anthropic is rate-limiting this key; some cards will be missed.'
+        e instanceof Anthropic.AuthenticationError ? 'Anthropic did not accept the API key. Check it in Settings.'
+        : e instanceof Anthropic.PermissionDeniedError ? 'This Anthropic key is not allowed to use the model Gloss needs.'
+        : e instanceof Anthropic.RateLimitError ? 'Anthropic is rate-limiting this key, so some cards will be missed.'
+        : e instanceof Anthropic.APIConnectionTimeoutError ? 'Anthropic took too long to answer, so that sentence was skipped.'
         : e instanceof Anthropic.APIConnectionError ? 'Could not reach Anthropic. Check the internet connection.'
+        : e instanceof Anthropic.BadRequestError && /credit|billing/i.test(e.message) ? 'The Anthropic account has no credit. Add credit at platform.claude.com under Billing.'
         : `Could not make cards: ${errText(e)}`;
-      S.setState({ error: message });
+      note(`extract FAILED in ${Math.round(performance.now() - t0)} ms: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`.slice(0, 500));
+      S.setState({ error: message, lastResult: null });
     })
     .finally(() => {
       inFlight = false;
@@ -121,7 +140,8 @@ function onFrame(f: Frame) {
 }
 
 function connect() {
-  stream = openSoniox(getKey('soniox'), CONTEXT_TERMS, {
+  note('soniox connect');
+  stream = openSoniox(getKey('soniox'), getAbout(), {
     onText(finalDelta, interim, speaker) {
       retries = 0;
       if (S.getState().notice === 'Reconnecting…') S.setState({ notice: null });
@@ -129,9 +149,13 @@ function connect() {
       S.setState({ interim });
       if (utterance.length > LONG_UTTERANCE_CHARS) closeUtterance();
     },
-    onEndpoint: closeUtterance,
+    onEndpoint: () => {
+      note(`endpoint (${utterance.trim().length} chars)`);
+      closeUtterance();
+    },
     onClosed(reason) {
       stream = undefined;
+      note(`soniox closed: ${reason ? `${reason.message} retryable=${reason.retryable}` : 'clean'}`);
       if (S.getState().phase !== 'listening' || S.getState().demo) return;
       if (reason?.retryable !== false && retries < MAX_RETRIES) {
         S.setState({ notice: 'Reconnecting…' });
@@ -162,8 +186,10 @@ function stopAudio() {
 async function openMicAndStream(): Promise<boolean> {
   try {
     lastNonSilentAt = performance.now();
+    note(`start: ${navigator.userAgent}`);
     capture = await startCapture(onFrame, (why) => S.setState({ notice: `${why} Pause and resume to continue.` }));
   } catch (e) {
+    note(`microphone failed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`);
     const denied = e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
     S.setState({
       phase: S.getState().lines.length ? 'paused' : 'idle',

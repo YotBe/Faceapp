@@ -2,6 +2,8 @@
 
 **Build plan for Claude Code.** Working name "Gloss" (rename freely).
 
+> **Audience, revised 2026-11-11:** the listener is a Hebrew speaker following talk on almost any subject, with cards in Hebrew by default. Where sections 1, 5.5 and 7 describe an edge-AI engineer and an edge-AI seed glossary, read them as one example of a subject; `DECISIONS.md` has the detail.
+>
 > **Revised 2026-11-11 at the owner's request: Gloss runs on his iPhone (15 Pro), as a web app in Safari, not as a desktop Electron app.** The phone sits on the desk and listens through its own microphone. Sections 0-2, 3.7, 4, 5.1, 5.2, 6.1, 6.3, 7, 8, 10, 11, 12 and 13 changed; the pipeline (5.3-5.7), the card design and the evaluation approach did not. The original desktop plan is in git history (commit `ad5f5fc`). `DECISIONS.md` records why.
 
 ---

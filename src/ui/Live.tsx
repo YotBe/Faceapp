@@ -126,6 +126,7 @@ export function Live() {
   const relations = useGloss((s) => s.relations);
   const fresh = useGloss((s) => s.fresh);
   const thinking = useGloss((s) => s.thinking);
+  const lastResult = useGloss((s) => s.lastResult);
   const notice = useGloss((s) => s.notice);
   const error = useGloss((s) => s.error);
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -143,6 +144,7 @@ export function Live() {
         {error && <p className="banner error" role="alert">{error}</p>}
         {notice && <p className="banner" role="status">{notice}</p>}
         <Transcript />
+        {(thinking || lastResult) && <p className="thinking" role="status">{thinking ? 'Checking the last sentence…' : lastResult}</p>}
 
         {pinned.length > 0 && (
           <div className="pins" aria-label="Pinned terms">
@@ -153,12 +155,11 @@ export function Live() {
         {hero ? <Hero card={hero} /> : (
           <div className="empty">
             <WaveIcon />
-            <h2>{thinking ? 'Checking for Jargon' : 'No Terms Yet'}</h2>
+            <h2>No Terms Yet</h2>
             <p>A card appears when someone uses a term you might not know. Most sentences don’t need one.</p>
           </div>
         )}
         {fit && <Fit relation={fit} />}
-        {hero && thinking && <p className="thinking">Checking the last sentence…</p>}
 
         {earlier.length > 0 && (
           <section aria-label="Earlier terms">

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getKey, setKey } from '../keys.js';
+import { getAbout, getLang, setAbout, setLang, type Lang } from '../prefs.js';
 import { useGloss } from '../store.js';
 import { Chevron } from './icons.js';
 
@@ -7,10 +8,15 @@ export function Settings({ needKeys, onClose }: { needKeys: boolean; onClose(): 
   const [soniox, setSoniox] = useState(getKey('soniox'));
   const [anthropic, setAnthropic] = useState(getKey('anthropic'));
   const known = useGloss((s) => s.known);
+  const [lang, setLangState] = useState<Lang>(getLang());
+  const [about, setAboutState] = useState(getAbout());
+  const [copied, setCopied] = useState('');
 
   const save = () => {
     setKey('soniox', soniox);
     setKey('anthropic', anthropic);
+    setLang(lang);
+    setAbout(about);
     onClose();
   };
   const forget = () => {
@@ -20,6 +26,16 @@ export function Settings({ needKeys, onClose }: { needKeys: boolean; onClose(): 
       // Nothing stored to remove.
     }
     useGloss.setState({ known: [] });
+  };
+
+  const copyLog = async () => {
+    const log = useGloss.getState().log;
+    try {
+      await navigator.clipboard.writeText(log.length ? log.join('\n') : 'No events yet. Start listening first.');
+      setCopied(log.length ? 'Copied. Paste it to Claude.' : 'Nothing recorded yet. Start listening first.');
+    } catch {
+      setCopied('Could not copy from this browser.');
+    }
   };
 
   return (
@@ -33,6 +49,22 @@ export function Settings({ needKeys, onClose }: { needKeys: boolean; onClose(): 
         </nav>
 
         {needKeys && <p className="banner">Add both keys to start listening. The demo works without them.</p>}
+
+        <h3 className="section-title">Cards</h3>
+        <div className="group">
+          <div className="cell">
+            <span>Explain in</span>
+            <span className="segmented" role="group" aria-label="Card language">
+              <button aria-pressed={lang === 'he'} onClick={() => setLangState('he')}>עברית</button>
+              <button aria-pressed={lang === 'en'} onClick={() => setLangState('en')}>English</button>
+            </span>
+          </div>
+          <label className="field stacked">
+            <span>About you (optional)</span>
+            <textarea value={about} onChange={(e) => setAboutState(e.target.value)} rows={3} dir="auto" placeholder="For example: software engineer, new to medicine. Today’s talk is about cardiology." />
+          </label>
+        </div>
+        <p className="footnote">Gloss works on any subject. Saying who you are and what the talk is about keeps it from explaining things you already know.</p>
 
         <h3 className="section-title">Transcription</h3>
         <div className="group">
@@ -67,7 +99,12 @@ export function Settings({ needKeys, onClose }: { needKeys: boolean; onClose(): 
         <div className="group">
           <a className="cell link" href="/check.html"><span>Run Phone Check</span><Chevron /></a>
         </div>
-        <p className="footnote">Tests the microphone and both services, and gives you a log to send if something doesn’t work.</p>
+        <p className="footnote">Tests the microphone and both services.</p>
+
+        <div className="group">
+          <button className="cell tinted" onClick={() => void copyLog()}>Copy Diagnostics</button>
+        </div>
+        <p className="footnote">{copied || 'Copies what happened in this session (timings and errors, never your keys or audio) so you can send it when something doesn’t work.'}</p>
       </div>
     </div>
   );

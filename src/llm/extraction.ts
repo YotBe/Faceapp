@@ -27,25 +27,27 @@ export const Extraction = z.object({
 });
 export type Extraction = z.infer<typeof Extraction>;
 
-export const SYSTEM = `You watch the live transcript of a technical customer call and pick out the jargon the listener may not know, so a card explaining it can appear on his phone while he is still talking.
+export const SYSTEM = `You watch the live transcript of a conversation, meeting or lecture and pick out the terms the listener may not know, so a short card explaining each one can appear on their phone while the speaker is still talking.
 
-The listener is an experienced full-stack engineer who recently became a Field Applications Engineer at an edge-AI company. He knows general software, networking, cloud and web well. He is new to edge-AI hardware and to deploying computer-vision models on it. He reads each card in one glance, mid-conversation, so a wrong or obvious card costs him attention: missing a term is better than explaining something he knows. Most utterances contain nothing worth a card, and an empty terms list is the usual, correct answer.
+The conversation can be about anything: technology, medicine, law, finance, science, business, politics, history. The listener is an intelligent adult who is usually not an expert in the subject being discussed. If a "listener" note is given, it says who they are and what they already know: trust it, and never explain what such a person obviously knows.
 
-What qualifies: products, boards, chips, SDKs, model architectures and variants, protocols, hardware interfaces, file formats, metrics, domain acronyms, and names internal to the customer. General software vocabulary (API, Docker, REST, GPU, latency) does not, unless it is used in a domain-specific sense.
+They read a card in one glance, mid-conversation, so a wrong or obvious card costs them attention. Missing a term is better than explaining an ordinary word. Most sentences contain nothing worth a card, and an empty terms list is the usual, correct answer.
 
-The transcript comes from speech recognition of Hebrew mixed with English terms, picked up by a phone microphone across a desk. Terms arrive garbled, split, or spelled phonetically in Hebrew letters. Work out the canonical term from the sound, the domain and the surrounding context; put what was actually written in heard_as and the proper name in canonical, in its original script.
+What qualifies: technical terms and jargon of any field, acronyms, named products, technologies, methods, standards, laws, organisations and concepts that a non-expert would have to look up. What does not: everyday vocabulary, words any educated adult knows, and things the speaker has just explained themselves. At most two terms per sentence: the ones the listener most needs.
+
+The transcript comes from speech recognition, often Hebrew mixed with English terms, picked up by a phone microphone. Terms arrive garbled, split, or spelled phonetically in the other language's letters. Work out the term that was meant from the sound and the context; put what was actually written in heard_as, copied exactly from the transcript, and the proper name in canonical, in its usual script.
 
 For each term:
-- one_liner: what it is, at most 14 words.
-- bullets: at most 3, at most 12 words each, the facts most useful in a customer conversation.
+- one_liner: what it is, at most 14 words, in plain language.
+- bullets: at most 3, at most 12 words each: the facts most useful for following this conversation.
 - why_here: one sentence tying it to what was just said, or null.
 - confidence: 0 to 1, how sure you are that canonical is the term that was meant.
-- knowledge: "known" if you are sure of the facts, "unsure" if you may be out of date or mixing things up, "unknown" if you do not know it. When unsure or unknown, say less: never invent specs, versions or numbers.
+- knowledge: "known" if you are sure of the facts, "unsure" if you may be out of date or mixing things up, "unknown" if you do not know it. When unsure or unknown, say less: never invent specs, versions, dates or numbers.
 - needs_grounding: true for versioned products, recent releases, and anything not "known".
 
-When two or more terms in the window relate, add a relation: concretely how they work together, and the typical gotcha when there is one.
+When two or more terms relate, add a relation: concretely how they connect, and the typical gotcha when there is one.
 
-Write explanations in the language named by explain_language. Extract only from the utterance marked NEW; the earlier transcript is context. Skip every term listed as already shown.`;
+Write every explanation in the language named by explain_language. When that is "he", write natural, everyday Hebrew, and keep the term itself and other proper names in their original script. Extract only from the utterance marked NEW; the earlier transcript is context. Skip every term listed as already shown.`;
 
 export type LatencyConfig = { name: string; thinking?: Anthropic.ThinkingConfigParam; effort: 'low' | 'medium' };
 // Haiku 5.5 thinks by default. For a 2 s budget the candidate is thinking off;
@@ -68,16 +70,18 @@ const HEADER_READY = /"canonical"\s*:\s*"(?:[^"\\]|\\.)*"[\s\S]*"one_liner"\s*:\
 
 export async function runExtraction(
   client: Anthropic,
-  input: { utterance: string; transcriptSoFar?: string; alreadyShown?: string[]; explainLanguage?: 'en' | 'he' },
+  input: { utterance: string; transcriptSoFar?: string; alreadyShown?: string[]; explainLanguage?: 'en' | 'he'; listener?: string },
   cfg: LatencyConfig = CONFIGS[0]!,
   model: string = FAST_MODEL,
+  timeoutMs?: number,
 ): Promise<ExtractionRun> {
   const t0 = performance.now();
   let ttftMs: number | undefined;
   let headerMs: number | undefined;
   let json = '';
 
-  const stream = client.messages.stream({
+  const stream = client.messages.stream(
+   {
     model,
     max_tokens: 2000,
     ...(cfg.thinking ? { thinking: cfg.thinking } : {}),
@@ -88,11 +92,15 @@ export async function runExtraction(
         role: 'user',
         content:
           `explain_language: ${input.explainLanguage ?? 'en'}\n` +
+          (input.listener ? `listener: ${input.listener}\n` : '') +
           `already shown: ${input.alreadyShown?.length ? input.alreadyShown.join(', ') : '(none)'}\n\n` +
           `transcript so far:\n${input.transcriptSoFar || '(none)'}\n\nNEW: ${input.utterance}`,
       },
     ],
-  });
+   },
+   // Without a deadline a stalled request would block every later sentence.
+   timeoutMs ? { timeout: timeoutMs } : undefined,
+  );
   stream.on('text', (delta) => {
     ttftMs ??= performance.now() - t0;
     json += delta;
