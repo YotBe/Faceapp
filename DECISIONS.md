@@ -96,6 +96,32 @@ resolving Vitest 4 here (`Cannot read properties of null (reading
 'edgesOut')`). `npm audit` reports three advisories, all inside the Vitest
 development toolchain; nothing from it ships in the built page.
 
+## 2026-11-11 — Visual design: the iOS system look
+
+The owner asked for Gloss to look like a current iPhone app rather than a
+generated one. The first screen had a purple-and-green glow, a gradient logo,
+neon accents and small capitalised labels. All of that is gone. The rule now:
+**draw nothing iOS itself would not draw.**
+
+- System colours, in light and dark, following the phone's appearance setting.
+- San Francisco at the Dynamic Type text styles (`font: -apple-system-body`
+  and friends), so the phone's text-size setting is respected. Other browsers
+  get fixed sizes that match the defaults.
+- Large titles, inset grouped lists with hairline separators, a settings sheet
+  with a grabber and Cancel / Save, a floating translucent toolbar, capsule
+  buttons, one tint colour (system blue), red only for recording and "End".
+- Terms in the transcript get a yellow highlighter background, which reads in
+  both appearances; yellow text did not in light mode.
+- No logo on the home screen; apps do not show their own icon inside
+  themselves. The icon exists for the Home Screen (`public/`), with a web
+  manifest so "Add to Home Screen" opens Gloss full-screen.
+- Icons are drawn for Gloss. Apple's SF Symbols are licensed for use in apps
+  on Apple platforms, not on the web, so they are not used.
+
+A layout bug found while testing this: the list of earlier cards was a
+shrinking flex item with clipped overflow, so its last rows were cut off and
+could not be reached. Items in the scroll area no longer shrink.
+
 ## Phase 0 — check page
 
 **Status: written and verified in headless Chromium only.** It is at `/check.html`. The
