@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+.env
+.env.*
+!.env.example
+spikes/out/
+# Real call audio never goes in git
+fixtures/*.wav
+spikes/fixtures/*.wav
+*.log
+.DS_Store
